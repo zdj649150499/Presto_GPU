@@ -1,0 +1,7 @@
+numpy
+future
+six
+scipy
+matplotlib
+astropy
+pyslalib

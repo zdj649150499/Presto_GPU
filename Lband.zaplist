@@ -1,0 +1,9 @@
+# This file created automatically with makebirds.py
+# Lines beginning with '#' are comments
+# Lines beginning with 'B' are barycentric freqs (i.e. PSR freqs)
+#                 Freq                 Width
+# --------------------  --------------------
+                  1000                  0.1
+                    50                  0.2
+                   100                  0.1
+    

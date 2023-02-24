@@ -1,0 +1,13 @@
+{
+    "files.associations": {
+        "accelsearch_gpu.h": "c",
+        "thread": "c",
+        "__threading_support": "c",
+        "stdint.h": "c",
+        "functions.cuh": "c",
+        "presto.h": "c",
+        "chkio.h": "c",
+        "list": "c",
+        "filesystem": "c"
+    }
+}

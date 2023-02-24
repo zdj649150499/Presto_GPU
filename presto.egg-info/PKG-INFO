@@ -1,0 +1,13 @@
+Metadata-Version: 2.1
+Name: presto
+Version: 4.0
+Summary: Python interfaces to PGPLOT and PRESTO
+Home-page: https://github.com/scottransom/presto
+Author: Scott Ransom (ppgplot from Nick Patavlis)
+Author-email: sransom@nrao.edu
+License: UNKNOWN
+Platform: UNKNOWN
+License-File: COPYING
+
+UNKNOWN
+
