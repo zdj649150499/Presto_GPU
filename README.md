@@ -1,6 +1,6 @@
 # PRESTO
 
-This is a GPU version for Presto that created by DeJiang Zhou at NAOC.
+This is a GPU version of PRESTO that created by DeJiang Zhou at NAOC.
 
 In this version, `prepsubband` and `accelsearch` can work with the option `-cuda` on a GPU device.
 Note that the GPU version of `accelsearch` references `presto_on_gpu_ljt` and it cannot yet do `jerk` searches, i.e. it cannot be used with `-wmax`.
