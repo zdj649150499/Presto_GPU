@@ -3,11 +3,12 @@
 This is a GPU version for Presto that created by DeJiang Zhou at NAOC.
 
 In this version, `prepsubband` and `accelsearch` can work with the option `-cuda` on a GPU device.
-Note that the GPU version of `accelsearch` cannot yet do `jerk` searches, i.e. it cannot be used with `-wmax`.
-something of `rfifind` have also been changed.
+Note that the GPU version of `accelsearch` references `presto_on_gpu_ljt` and it cannot yet do `jerk` searches, i.e. it cannot be used with `-wmax`.
+Something of `rfifind` have also been changed and the GPU version of `prepfold` will reported in the future.
 
-The original CPU version is:
-http://www.cv.nrao.edu/~sransom/presto/
+The original CPU version is: http://www.cv.nrao.edu/~sransom/presto/
+
+`presto_on_gpu_ljt` version: https://github.com/jintaoluo/presto_on_gpu
 
 PRESTO is a large suite of pulsar search and analysis software developed
 primarily by Scott Ransom mostly from scratch, and released under the GPL (v2).
