@@ -3,7 +3,7 @@
 This is a GPU version for Presto that created by DeJiang Zhou at NAOC.
 
 In this version, `prepsubband` and `accelsearch` can work with the option `-cuda` on a GPU device.
-Note that the GPU version of `accelsearch` cannot yet do `-jerk` searches, i.e. it cannot be used with `-wmax`.
+Note that the GPU version of `accelsearch` cannot yet do `jerk` searches, i.e. it cannot be used with `-wmax`.
 something of `rfifind` have also been changed.
 
 The original CPU version is:
