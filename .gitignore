@@ -1,0 +1,6 @@
+
+*.json
+.vscode/settings.json
+*.json
+include/accel.h
+include/accelsearch_cmd.h

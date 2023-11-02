@@ -102,14 +102,23 @@ void spectra_info_to_inf(struct spectra_info *s, infodata *idata);
 long long offset_to_spectra(long long specnum, struct spectra_info *s);
 void set_currentspectra(long long specnum);
 int read_rawblocks(float *fdata, int numsubints, struct spectra_info *s, int *padding);
+int read_rawblocks_gpu(float *fdata, int numsubints, struct spectra_info *s,
+                   int *padding);
 int read_psrdata(float *fdata, int numspect, struct spectra_info *s, int *delays, int *padding, int *maskchans, int *nummasked, mask *obsmask);
 void get_channel(float chandat[], int channum, int numsubints, float rawdata[], struct spectra_info *s);
 void get_channelbk_avg_var(float *chandat, int numsubints, float *rawdata,
+                 struct spectra_info *s, float *mean, float *var, int transpose, int thread);
+void get_channelbk_avg_var_gpu(float *chandat, int numsubints, float *rawdata,
                  struct spectra_info *s, float *mean, float *var, int transpose);
 void get_subband_avg_var(float *chandat, int numsubints, short *rawdata,
                  struct spectra_info *s, float *mean, float *var);
+void get_subband_avg_var_gpu(float *chandat, int numsubints, short *rawdata,
+                 struct spectra_info *s, float *mean, float *var);
 int prep_subbands(float *fdata, float *rawdata, int *delays, int numsubbands, struct spectra_info *s, int transpose, int *maskchans, int *nummasked, mask *obsmask);
+int prep_subbands_GPU(float *fdata, float *rawdata, int *delays, int numsubbands, struct spectra_info *s, int transpose, int *maskchans, int *nummasked, mask *obsmask);
+
 int read_subbands(float *fdata, int *delays, int numsubbands, struct spectra_info *s, int transpose, int *padding, int *maskchans, int *nummasked, mask *obsmask);
+int read_subbands_GPU(float *fdata, int *delays, int numsubbands, struct spectra_info *s, int transpose, int *padding, int *maskchans, int *nummasked, mask *obsmask);
 void flip_band(float *fdata, struct spectra_info *s);
 int *get_ignorechans(char *ignorechans_str, int minchan, int maxchan, int *num_ignorechans, char **filestr);
 

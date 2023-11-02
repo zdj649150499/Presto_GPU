@@ -1,6 +1,7 @@
 #include "accel.h"
 #include "accelsearch_cmd.h"
 
+
 #if defined (__GNUC__)
 #define inline __inline__
 #else
@@ -37,6 +38,13 @@ void set_openmp_numthreads(int numthreads)
 
 /* Return 2**n */
 #define index_to_twon(n) (1<<n)
+
+
+
+cufftHandle plan_pdata_gpu_array[32][32];
+cufftHandle plan_tmpdat_gpu_array[32][32];
+
+
 
 /* Return x such that 2**x = n */
 static inline int twon_to_index(int n)
@@ -146,6 +154,8 @@ static int calc_fftlen(int numharm, int harmnum, int max_zfull, int max_wfull, a
         w_resp_halfwidth(calc_required_z(harm_fract, max_zfull),
                          calc_required_w(harm_fract, max_wfull), LOWACC);
     return next_good_fftlen(bins_needed + end_effects);
+
+    // return next2_to_n(bins_needed + end_effects);
 }
 
 
@@ -209,7 +219,13 @@ static void init_subharminfo(int numharm, int harmnum, int zmax, int wmax, subha
     shi->harmnum = harmnum;
     shi->zmax = calc_required_z(harm_fract, zmax);
     shi->wmax = calc_required_w(harm_fract, wmax);
-    if (numharm > 1) {
+    shi->numkern_zdim = (shi->zmax / ACCEL_DZ) * 2 + 1;
+    shi->numkern_wdim = (shi->wmax / ACCEL_DW) * 2 + 1;
+    shi->numkern = shi->numkern_zdim * shi->numkern_wdim;
+    // shi->numkern = (shi->zmax / ACCEL_DZ) * 2 + 1;  
+
+
+    if (numharm > 1 && !obs->cudaP) {
         shi->rinds = (unsigned short *) malloc(obs->corr_uselen * sizeof(unsigned short));
         shi->zinds = (unsigned short *) malloc(obs->corr_uselen * sizeof(unsigned short));
     }
@@ -217,9 +233,6 @@ static void init_subharminfo(int numharm, int harmnum, int zmax, int wmax, subha
         fftlen = obs->fftlen;
     else
         fftlen = calc_fftlen(numharm, harmnum, zmax, wmax, obs);
-    shi->numkern_zdim = (shi->zmax / ACCEL_DZ) * 2 + 1;
-    shi->numkern_wdim = (shi->wmax / ACCEL_DW) * 2 + 1;
-    shi->numkern = shi->numkern_zdim * shi->numkern_wdim;
     /* Allocate 2D array of kernels, with dimensions being z and w */
     shi->kern = gen_kernmatrix(shi->numkern_zdim, shi->numkern_wdim);
     /* Actually append kernels to each array element */
@@ -234,23 +247,15 @@ static void init_subharminfo(int numharm, int harmnum, int zmax, int wmax, subha
 
 subharminfo **create_subharminfos(accelobs * obs)
 {
-    double kern_ram_use=0;
-    int ii, jj, harmtosum, fftlen;
+    int ii, jj, harmtosum;// , fftlen;
     subharminfo **shis;
     
     shis = (subharminfo **) malloc(obs->numharmstages * sizeof(subharminfo *));
     /* Prep the fundamental (actually, the highest harmonic) */
     shis[0] = (subharminfo *) malloc(2 * sizeof(subharminfo));
+
     init_subharminfo(1, 1, (int) obs->zhi, (int) obs->whi, &shis[0][0], obs);
-    fftlen = obs->fftlen;
-    kern_ram_use += shis[0][0].numkern * fftlen * sizeof(fcomplex); // in Bytes
-    if (obs->numw)
-        printf("  Harm  1/1 : %5d kernels, %4d < z < %-4d and %5d < w < %-5d (%5d pt FFTs)\n",
-               shis[0][0].numkern, -shis[0][0].zmax, shis[0][0].zmax,
-               -shis[0][0].wmax, shis[0][0].wmax, fftlen);
-    else
-        printf("  Harm  1/1 : %5d kernels, %4d < z < %-4d (%d pt FFTs)\n",
-               shis[0][0].numkern, -shis[0][0].zmax, shis[0][0].zmax, fftlen);
+    // fftlen = obs->fftlen;
     /* Prep the sub-harmonics if needed */
     if (!obs->inmem) {
         for (ii = 1; ii < obs->numharmstages; ii++) {
@@ -259,26 +264,15 @@ subharminfo **create_subharminfos(accelobs * obs)
             for (jj = 1; jj < harmtosum; jj += 2) {
                 init_subharminfo(harmtosum, jj, (int) obs->zhi,
                                  (int) obs->whi, &shis[ii][jj - 1], obs);
-                fftlen = calc_fftlen(harmtosum, jj, (int) obs->zhi, (int) obs->whi, obs);
-                kern_ram_use += shis[ii][jj - 1].numkern * fftlen * sizeof(fcomplex); // in Bytes
-                if (obs->numw)
-                    printf("  Harm %2d/%-2d: %5d kernels, %4d < z < %-4d and %5d < w < %-5d (%5d pt FFTs)\n",
-                           jj, harmtosum, shis[ii][jj - 1].numkern,
-                           -shis[ii][jj - 1].zmax, shis[ii][jj - 1].zmax,
-                           -shis[ii][jj - 1].wmax, shis[ii][jj - 1].wmax, fftlen);
-                else
-                    printf("  Harm %2d/%-2d: %5d kernels, %4d < z < %-4d (%d pt FFTs)\n",
-                           jj, harmtosum, shis[ii][jj - 1].numkern,
-                           -shis[ii][jj - 1].zmax, shis[ii][jj - 1].zmax, fftlen);
+                // fftlen = calc_fftlen(harmtosum, jj, (int) obs->zhi, (int) obs->whi, obs);
             }
         }
     }
-    printf("Total RAM used by correlation kernels:  %.3f GB\n", kern_ram_use / (1 << 30));
     return shis;
 }
 
 
-static void free_subharminfo(subharminfo * shi)
+static void free_subharminfo(subharminfo * shi, accelobs * obs)
 {
     int ii, jj;
     
@@ -287,10 +281,16 @@ static void free_subharminfo(subharminfo * shi)
             free_kernel(&shi->kern[ii][jj]);
         }
     }
-    if (shi->numharm > 1) {
+    if (shi->numharm > 1 && !obs->cudaP) {
         free(shi->rinds);
         free(shi->zinds);
+        // cudaFreeHost(shi->rinds);
+        // cudaFreeHost(shi->zinds);
     }
+    // else if (shi->numharm > 1 && obs->cudaP) {
+    //     cudaFreeHost(shi->rinds);
+    //     cudaFreeHost(shi->zinds);
+    // }
     free(shi->kern);
 }
 
@@ -304,13 +304,13 @@ void free_subharminfos(accelobs * obs, subharminfo ** shis)
         for (ii = 1; ii < obs->numharmstages; ii++) {
             harmtosum = index_to_twon(ii);
             for (jj = 1; jj < harmtosum; jj += 2) {
-                free_subharminfo(&shis[ii][jj - 1]);
+                free_subharminfo(&shis[ii][jj - 1], obs);
             }
             free(shis[ii]);
         }
     }
     /* Free the fundamental */
-    free_subharminfo(&shis[0][0]);
+    free_subharminfo(&shis[0][0], obs);
     free(shis[0]);
     /* Free the container */
     free(shis);
@@ -619,10 +619,10 @@ static void center_string(char *outstring, char *instring, int width)
     int len;
 
     len = strlen(instring);
-    if (width < len) {
-        printf("\nwidth < len (%d) in center_string(outstring, '%s', width=%d)\n",
-               len, instring, width);
-    }
+    // if (width < len) {
+    //     printf("\nwidth < len (%d) in center_string(outstring, '%s', width=%d)\n",
+    //            len, instring, width);
+    // }
     memset(outstring, ' ', width);
     outstring[width] = '\0';
     if (len >= width) {
@@ -1003,10 +1003,13 @@ fcomplex *get_fourier_amplitudes(long long lobin, int numbins, accelobs * obs)
         // Now grab the data we need
         memcpy(tmpdata + offset, obs->fft + firstbin, sizeof(fcomplex) * newnumbins);
         return tmpdata;
-    } else {
+    }
+     else {
         return read_fcomplex_file(obs->fftfile, lobin - obs->lobin, numbins);
     }
 }
+
+
 
 ffdotpows *subharm_fderivs_vol(int numharm, int harmnum,
                                double fullrlo, double fullrhi,
@@ -1027,7 +1030,6 @@ ffdotpows *subharm_fderivs_vol(int numharm, int harmnum,
     ffdot->rlo = (long long) floor(drlo);
     ffdot->zlo = calc_required_z(harm_fract, obs->zlo);
     ffdot->wlo = calc_required_w(harm_fract, obs->wlo);
-
     /* Initialize the lookup indices */
     if (numharm > 1 && !obs->inmem) {
         double rr, subr;
@@ -1053,6 +1055,7 @@ ffdotpows *subharm_fderivs_vol(int numharm, int harmnum,
         if (ffdot->numrs % ACCEL_RDR)
             ffdot->numrs = (ffdot->numrs / ACCEL_RDR + 1) * ACCEL_RDR;
     }
+    
     ffdot->zinds = shi->zinds;
     ffdot->numzs = shi->numkern_zdim;
     ffdot->numws = shi->numkern_wdim;
@@ -1064,7 +1067,7 @@ ffdotpows *subharm_fderivs_vol(int numharm, int harmnum,
     fftlen = shi->kern[0][0].fftlen;
     lobin = ffdot->rlo - binoffset;
     numdata = fftlen / ACCEL_NUMBETWEEN;
-    data = get_fourier_amplitudes(lobin, numdata, obs);
+    data = get_fourier_amplitudes(lobin, numdata, obs); // the data: done fft
     //if (!obs->mmap_file && !obs->dat_input && 0)
     //    printf("This is newly malloc'd!\n");
 
@@ -1108,8 +1111,9 @@ ffdotpows *subharm_fderivs_vol(int numharm, int harmnum,
 
     // Prep, spread, and FFT the data
     pdata = gen_cvect(fftlen);
+
     spread_no_pad(data, fftlen / ACCEL_NUMBETWEEN, pdata, fftlen, ACCEL_NUMBETWEEN);
-    // Note COMPLEXFFT is not thread-safe because of wisdom caching
+        // Note COMPLEXFFT is not thread-safe because of wisdom caching
     COMPLEXFFT(pdata, fftlen, -1);
 
     // Create the output power array
@@ -1117,7 +1121,7 @@ ffdotpows *subharm_fderivs_vol(int numharm, int harmnum,
 
     // Create a plan with temp arrays.  We will reuse the plan
     // with the new-array FFTW execute functions
-    {
+
         fcomplex *tmpdat = gen_cvect(fftlen);
         fcomplex *tmpout = gen_cvect(fftlen);
         // Compute the inverse FFT plan (these are in/out array specific)
@@ -1127,69 +1131,422 @@ ffdotpows *subharm_fderivs_vol(int numharm, int harmnum,
                                     FFTW_MEASURE | FFTW_DESTROY_INPUT);
         vect_free(tmpdat);
         vect_free(tmpout);
-    }
 
-    // Perform the correlations in a thread-safe manner
-#ifdef _OPENMP
-#pragma omp parallel default(none) shared(pdata,shi,fftlen,binoffset,ffdot,invplan)
-#endif
-    {
-        const float norm = 1.0 / (fftlen * fftlen);
-        const int offset = binoffset * ACCEL_NUMBETWEEN;
-        // tmpdat gets overwritten during the correlation
-        fcomplex *tmpdat = gen_cvect(fftlen);
-        fcomplex *tmpout = gen_cvect(fftlen);
-        int jj;
-#ifdef _OPENMP
-// #pragma omp for collapse(2)  Do we want this somehow?
-#pragma omp for
-#endif
-        /* Check, should we add the collapse to parallelize numws and numzs loops? */
-        for (ii = 0; ii < ffdot->numws; ii++) {
-            for (jj = 0; jj < ffdot->numzs; jj++) {
-                int kk;
-                float *fkern = (float *) shi->kern[ii][jj].data;
-                float *fpdata = (float *) pdata;
-                float *fdata = (float *) tmpdat;
-                float *outpows = ffdot->powers[ii][jj];
-                // multiply data and kernel 
-                // (using floats for better vectorization)
-#if (defined(__GNUC__) || defined(__GNUG__)) &&         \
-    !(defined(__clang__) || defined(__INTEL_COMPILER))
-#pragma GCC ivdep
-#endif
-                for (kk = 0; kk < fftlen * 2; kk += 2) {
-                    const float dr = fpdata[kk], di = fpdata[kk + 1];
-                    const float kr = fkern[kk], ki = fkern[kk + 1];
-                    fdata[kk] = dr * kr + di * ki;
-                    fdata[kk + 1] = di * kr - dr * ki;
-                }
-                // Do the inverse FFT (tmpdat -> tmpout)
-                fftwf_execute_dft(invplan, (fftwf_complex *) tmpdat,
-                                  (fftwf_complex *) tmpout);
-                // Turn the good parts of the result into powers and store
-                // them in the output matrix
-                fdata = (float *) tmpout;
-#if (defined(__GNUC__) || defined(__GNUG__)) &&         \
-    !(defined(__clang__) || defined(__INTEL_COMPILER))
-#pragma GCC ivdep
-#endif
-                for (kk = 0; kk < ffdot->numrs; kk++) {
-                    const int ind = 2 * (kk + offset);
-                    outpows[kk] = (fdata[ind] * fdata[ind] +
-                                   fdata[ind + 1] * fdata[ind + 1]) * norm;
+        // Perform the correlations in a thread-safe manner
+        #ifdef _OPENMP
+        #pragma omp parallel default(none) shared(pdata,shi,fftlen,binoffset,ffdot,invplan)
+        #endif
+        {
+            const float norm = 1.0 / (fftlen * fftlen);
+            const int offset = binoffset * ACCEL_NUMBETWEEN;
+            // tmpdat gets overwritten during the correlation
+            fcomplex *tmpdat = gen_cvect(fftlen);
+            fcomplex *tmpout = gen_cvect(fftlen);
+            int jj;
+            #ifdef _OPENMP
+            // #pragma omp for collapse(2)  Do we want this somehow?
+            #pragma omp for
+            #endif
+            /* Check, should we add the collapse to parallelize numws and numzs loops? */
+            for (ii = 0; ii < ffdot->numws; ii++) {
+                for (jj = 0; jj < ffdot->numzs; jj++) {
+                    int kk;
+                    /*input data*/
+                    float *fkern = (float *) shi->kern[ii][jj].data;
+                    float *fpdata = (float *) pdata;
+                    /*output data*/
+                    float *fdata = (float *) tmpdat;
+                    float *outpows = ffdot->powers[ii][jj];
+                    // multiply data and kernel 
+                    // (using floats for better vectorization)
+                    #if (defined(__GNUC__) || defined(__GNUG__)) &&         \
+                        !(defined(__clang__) || defined(__INTEL_COMPILER))
+                    #pragma GCC ivdep
+                    #endif
+                    for (kk = 0; kk < fftlen * 2; kk += 2) {
+                        const float dr = fpdata[kk], di = fpdata[kk + 1];
+                        const float kr = fkern[kk], ki = fkern[kk + 1];
+                        fdata[kk] = dr * kr + di * ki;
+                        fdata[kk + 1] = di * kr - dr * ki;
+                    }
+                    // Do the inverse FFT (tmpdat -> tmpout)
+                    fftwf_execute_dft(invplan, (fftwf_complex *) tmpdat,
+                                    (fftwf_complex *) tmpout);
+                    // Turn the good parts of the result into powers and store
+                    // them in the output matrix
+                    fdata = (float *) tmpout;
+                    #if (defined(__GNUC__) || defined(__GNUG__)) &&         \
+                        !(defined(__clang__) || defined(__INTEL_COMPILER))
+                    #pragma GCC ivdep
+                    #endif
+                    for (kk = 0; kk < ffdot->numrs; kk++) {
+                        const int ind = 2 * (kk + offset);
+                        outpows[kk] = (fdata[ind] * fdata[ind] +
+                                    fdata[ind + 1] * fdata[ind + 1]) * norm;
+                    }
                 }
             }
+            vect_free(tmpdat);
+            vect_free(tmpout);
         }
-        vect_free(tmpdat);
-        vect_free(tmpout);
-    }
+    
+
     // Free data and the spread-data
     vect_free(data);
     vect_free(pdata);
     return ffdot;
 }
 
+ffdotpows *ini_subharm_fderivs_vol(int numharm, int harmnum, 
+			       double fullrlo, double fullrhi, 
+			       subharminfo *shi, accelobs *obs)
+{
+    double drlo, drhi, harm_fract;
+    ffdotpows *ffdot = (ffdotpows *) malloc(sizeof(ffdotpows));
+
+    /* Calculate and get the required amplitudes */
+    harm_fract = (double) harmnum / (double) numharm;
+    drlo = calc_required_r(harm_fract, fullrlo);
+    drhi = calc_required_r(harm_fract, fullrhi);
+    ffdot->rlo = (long long) floor(drlo);
+    ffdot->zlo = calc_required_z(harm_fract, obs->zlo);
+    // The +1 below is important!
+    ffdot->numrs = (int) ((ceil(drhi) - floor(drlo))
+                        * ACCEL_RDR + DBLCORRECT) + 1;
+    if (numharm == 1 && harmnum == 1) {
+        ffdot->numrs = obs->corr_uselen;
+    } else {
+        if (ffdot->numrs % ACCEL_RDR)
+            ffdot->numrs = (ffdot->numrs / ACCEL_RDR + 1) * ACCEL_RDR;
+    }
+    ffdot->numzs = shi->numkern_zdim;
+    return ffdot;
+
+}
+
+cufftComplex *cp_kernel_array_to_gpu(subharminfo **subharminfs, int numharmstages, int **offset_array)
+//cp kernel arrays contained in **subharminfs to GPU memory *kernel_array_on_gpu
+//and store the offset within *kernel_array_on_gpu for every array, offsets stored in **offset_array
+//subharminfs: input
+//numharmstages: input
+//offset_array: output
+//kernel_array_on_gpu: output
+//
+{
+
+
+	int harm, harmtosum, stage;		
+	int ii, jj;
+	int kernel_total_size =0 ;
+	int numkern, fftlen;
+	unsigned int offset_base = 0, offset_tmp;
+	cufftComplex *kernel_vect_host;
+    cufftComplex *kernel_vect_on_gpu;
+
+	//printf("cp_kernel_array_to_gpu: Check CUDA devices\n");
+	
+	numkern = subharminfs[0][0].numkern;
+	fftlen = subharminfs[0][0].kern[0][0].fftlen;
+	offset_array[0][0] = kernel_total_size ; 
+	kernel_total_size = kernel_total_size + numkern * fftlen;
+	
+	for(stage=1; stage<numharmstages; stage++){
+		harmtosum = 1 << stage;		
+		for (harm = 1; harm < harmtosum; harm += 2) {               					
+			numkern = subharminfs[stage][harm-1].numkern;
+			fftlen = subharminfs[stage][harm-1].kern[0][0].fftlen;
+			offset_array[stage][harm-1] = kernel_total_size ; 
+			kernel_total_size = kernel_total_size + numkern * fftlen;
+		}
+	}
+	cudaMalloc((void **)&kernel_vect_on_gpu, sizeof(cufftComplex) * kernel_total_size);
+	kernel_vect_host = (cufftComplex *)malloc( sizeof(cufftComplex) * kernel_total_size);
+	//take kernel_vect_host as buffer
+	 //stage : 0
+	numkern = subharminfs[0][0].numkern;
+    fftlen = subharminfs[0][0].kern[0][0].fftlen;
+    offset_base = offset_array[0][0];
+    for(ii=0; ii<numkern; ii++)
+    {
+        for(jj=0; jj<fftlen; jj++){   		
+            offset_tmp = offset_base + fftlen*ii + jj;
+            kernel_vect_host[offset_tmp].x = subharminfs[0][0].kern[0][ii].data[jj].r;
+            kernel_vect_host[offset_tmp].y = subharminfs[0][0].kern[0][ii].data[jj].i;
+        }
+    }
+
+   //other stages
+	if (numharmstages > 1) {   
+	for(stage=1; stage<numharmstages; stage++){	
+        harmtosum = 1 << stage;		
+        for(harm = 1; harm < harmtosum; harm += 2) {         
+
+            offset_base = offset_array[stage][harm-1];
+
+            fftlen = subharminfs[stage][harm-1].kern[0][0].fftlen;
+            numkern = subharminfs[stage][harm-1].numkern;
+
+            for(ii=0; ii<numkern; ii++){
+                for(jj=0; jj<fftlen; jj++){
+                    offset_tmp = offset_base + fftlen*ii + jj ;
+                    kernel_vect_host[offset_tmp].x = subharminfs[stage][harm-1].kern[0][ii].data[jj].r;
+                    kernel_vect_host[offset_tmp].y = subharminfs[stage][harm-1].kern[0][ii].data[jj].i;
+                    }
+                }
+                
+            }
+        }
+	}   
+   cudaMemcpy( kernel_vect_on_gpu, kernel_vect_host, sizeof(cufftComplex) * kernel_total_size, cudaMemcpyHostToDevice);
+
+   free(kernel_vect_host);
+
+   return kernel_vect_on_gpu;
+}
+
+void get_rind_zind_gpu(unsigned short *d_rinds_gpu, unsigned short *d_zinds_gpu, int numharmstages, accelobs obs, double fullrlo)
+{
+    int ii, jj, kk=0;
+    unsigned short *rinds_cpu;
+    unsigned short *zinds_cpu;
+    unsigned short *rinds;
+    unsigned short *zinds;
+    
+    cudaMallocHost((void**)&rinds_cpu, sizeof(unsigned short)*obs.corr_uselen*(pow(2,numharmstages)-1));
+    cudaMallocHost((void**)&zinds_cpu, sizeof(unsigned short)*obs.numz*(pow(2,numharmstages)-1));
+
+
+    double rr, subr;
+    double drlo, drhi, harm_fract;
+    int stage;
+    int harmtosum, harm;
+    
+    int corr_uselen= obs.corr_uselen;
+    double obszlo = obs.zlo;
+    int obsnumz = obs.numz;
+
+    for (stage = 1; stage < numharmstages; stage++)
+    {
+        harmtosum = 1 << stage;
+        for (harm = 1; harm < harmtosum; harm += 2)
+        {
+            harm_fract = (double) harm / (double) harmtosum;
+            drlo = calc_required_r(harm_fract, fullrlo);
+            long long rlo = (long long) floor(drlo);
+            int zlo = calc_required_z(harm_fract, obszlo);
+            rinds = rinds_cpu+kk*corr_uselen;
+            zinds = zinds_cpu+kk*obsnumz;
+            for (ii = 0; ii < corr_uselen; ii++) {
+                rr = fullrlo + ii * ACCEL_DR;
+                subr = calc_required_r(harm_fract, rr);
+                rinds[ii] = index_from_r(subr, rlo);
+            }
+            double zz, subz;
+            for (ii = 0; ii < obsnumz; ii++) {
+                zz = obszlo + ii * ACCEL_DZ;
+                subz = calc_required_z(harm_fract, zz);
+                zinds[ii] = index_from_z(subz, zlo);
+            }
+            kk++;
+        }
+    }
+
+    cudaMemcpy(d_rinds_gpu, rinds_cpu, sizeof(unsigned short)*obs.corr_uselen*(pow(2,numharmstages)-1), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_zinds_gpu, zinds_cpu, sizeof(unsigned short)*obs.numz*(pow(2,numharmstages)-1), cudaMemcpyHostToDevice);
+
+    cudaFree(rinds_cpu);
+    cudaFree(zinds_cpu);
+}
+
+void *subharm_fderivs_vol_gpu(int numharm, int harmnum, 
+			       double fullrlo, double fullrhi, 
+			       subharminfo *shi, accelobs *obs, cufftComplex *fkern_gpu, cufftComplex *pdata_gpu, cufftComplex *tmpdat_gpu, cufftComplex *tmpout_gpu, float *outpows_gpu, float *outpows_gpu_obs, cufftComplex *pdata, int tip, unsigned short *d_zinds_gpu, unsigned short *d_rinds_gpu, unsigned short *zinds_cpu, unsigned short *rinds_cpu, ffdotpows *fundamental, int **offset_array, int stage, cufftComplex *data_gpu, float *powers)
+{
+    int ii, numdata, fftlen, binoffset;
+    long long lobin;
+    float powargr, powargi;
+    double drlo, drhi, harm_fract;
+    fcomplex *data;
+
+
+    harm_fract = (double) harmnum / (double) numharm;
+    drlo = calc_required_r(harm_fract, fullrlo);
+    drhi = calc_required_r(harm_fract, fullrhi);
+    long long rlo = (long long) floor(drlo);
+    int zlo = calc_required_z(harm_fract, obs->zlo);
+    /* Initialize the lookup indices */
+    // if (numharm > 1 && !obs->inmem) {
+    //     double rr, subr;
+    //     for (ii = 0; ii < obs->corr_uselen; ii++) {
+    //         rr = fullrlo + ii * ACCEL_DR;
+    //         subr = calc_required_r(harm_fract, rr);
+    //         rinds_cpu[ii] = index_from_r(subr, rlo);
+    //     }
+    //     double zz, subz;
+    //     for (ii = 0; ii < obs->numz; ii++) {
+    //         zz = obs->zlo + ii * ACCEL_DZ;
+    //         subz = calc_required_z(harm_fract, zz);
+    //         zinds_cpu[ii] = index_from_z(subz, zlo);
+    //     }
+    // }
+    // The +1 below is important!
+    int numrs = (int) ((ceil(drhi) - floor(drlo))
+                          * ACCEL_RDR + DBLCORRECT) + 1;
+    if (numharm == 1 && harmnum == 1) {
+        numrs = obs->corr_uselen;
+    } else {
+        if (numrs % ACCEL_RDR)
+            numrs = (numrs / ACCEL_RDR + 1) * ACCEL_RDR;
+    }
+    int numzs = shi->numkern_zdim;
+
+    /* Determine the largest kernel halfwidth needed to analyze the current subharmonic */
+    /* Verified numerically that, as long as we have symmetric z's and w's, */
+    /* shi->kern[0][0].kern_half_width is the maximal halfwidth over the range of w's and z's */
+    binoffset = shi->kern[0][0].kern_half_width;
+    fftlen = shi->kern[0][0].fftlen;
+    lobin = rlo - binoffset;
+    numdata = fftlen / ACCEL_NUMBETWEEN;
+    data = get_fourier_amplitudes(lobin, numdata, obs); // the data: done fft
+
+
+    double norm_data;
+    {
+        // default block median normalization
+        for (ii = 0; ii < numdata; ii++)
+            powers[ii] = POWER(data[ii].r, data[ii].i);
+        norm_data = 1.0 / sqrt(median(powers, numdata) / log(2.0));
+    } 
+
+    // Prep, spread, and FFT the data
+    // spread_no_pad(data, fftlen / ACCEL_NUMBETWEEN, pdata, fftlen, ACCEL_NUMBETWEEN);
+
+    cudaMemcpy(data_gpu, (cufftComplex *)data, sizeof(cufftComplex)*numdata, cudaMemcpyHostToDevice);
+    // get_power_GPU(data_gpu, numdata, powers);
+    // norm_data = 1.0 / sqrt(get_med_gpu(powers, numdata) / log(2.0));
+    spread_no_pad_gpu(data_gpu, fftlen / ACCEL_NUMBETWEEN, pdata_gpu, fftlen, ACCEL_NUMBETWEEN, norm_data);
+    // Note COMPLEXFFT is not thread-safe because of wisdom caching
+    // cudaMemcpy(pdata_gpu, (cufftComplex *)pdata, sizeof(cufftComplex)*fftlen, cudaMemcpyHostToDevice);
+    FFTonGPU(pdata_gpu, pdata_gpu, fftlen, 1, -1, plan_pdata_gpu_array[stage][harmnum-1]);
+
+    const float norm = 1.0 / (fftlen * fftlen);
+    int offset = binoffset * ACCEL_NUMBETWEEN;
+    long long rlen = (obs->highestbin + obs->corr_uselen) * ACCEL_RDR;
+
+    {
+        int offs = 0;
+        if(numharm ==1 && harmnum ==1)
+            offs = 0;
+        else if(numharm > 1)
+            offs =  offset_array[stage][harmnum-1];
+        
+        loops_in_GPU_1(pdata_gpu, fkern_gpu+offs ,tmpdat_gpu, fftlen, numzs);
+        FFTonGPU(tmpdat_gpu, tmpout_gpu,fftlen, numzs, +1, plan_tmpdat_gpu_array[stage][harmnum-1]);
+        if(obs->inmem)
+            loops_in_GPU_2(tmpout_gpu, outpows_gpu, numrs, numzs,offset, fftlen,norm, outpows_gpu_obs, rlen, rlo*ACCEL_RDR, 1);
+        else
+        {
+            if(numharm == 1 && harmnum == 1)
+            {
+                loops_in_GPU_2(tmpout_gpu, outpows_gpu, numrs, numzs,offset, fftlen, norm, outpows_gpu_obs, rlen, rlo*ACCEL_RDR, 0);
+            }
+            if(numharm > 1)
+            {
+                // cudaMemcpy(d_rinds_gpu, (unsigned short *)rinds_cpu, sizeof(unsigned short)*obs->corr_uselen, cudaMemcpyHostToDevice);
+                // cudaMemcpy(d_zinds_gpu, (unsigned short *)zinds_cpu, sizeof(unsigned short)*obs->numz, cudaMemcpyHostToDevice);
+                add_subharm_gpu(outpows_gpu, tmpout_gpu, d_rinds_gpu+(int)(((pow(2,stage-1)-1)+harmnum/2)*obs->corr_uselen), d_zinds_gpu+(int)(((pow(2,stage-1)-1)+harmnum/2)*obs->numz), fundamental->numrs, fundamental->numzs, fftlen, numzs,offset, norm);
+            }
+        }
+    }
+    vect_free(data);
+}
+
+//----------------------initialize cuFFT plans ----------------------
+void init_cuFFT_plans(subharminfo **subharminfs, int numharmstages, int inmem)
+{
+	int harm, harmtosum, stage;		
+	int numkern, fftlen;
+	
+	numkern = subharminfs[0][0].numkern;
+	fftlen = subharminfs[0][0].kern[0][0].fftlen;
+
+	cufftPlan1d(&plan_pdata_gpu_array[0][0], fftlen, CUFFT_C2C, 1);
+	cufftPlan1d(&plan_tmpdat_gpu_array[0][0], fftlen, CUFFT_C2C, numkern);
+
+	if (numharmstages > 1 && !inmem) {
+		for(stage=1; stage<numharmstages; stage++){	
+			harmtosum = 1 << stage;
+			for (harm = 1; harm < harmtosum; harm += 2) {
+				numkern = subharminfs[stage][harm-1].numkern;
+				fftlen = subharminfs[stage][harm-1].kern[0][0].fftlen;
+				
+				cufftPlan1d(&plan_pdata_gpu_array[stage][harm-1], fftlen, CUFFT_C2C, 1);		
+				cufftPlan1d(&plan_tmpdat_gpu_array[stage][harm-1], fftlen, CUFFT_C2C, numkern);		
+			}	
+		}	
+	}
+}
+
+//----------------------destroy cuFFT plans ----------------------
+void destroy_cuFFT_plans(subharminfo **subharminfs, int numharmstages, int inmem)
+{
+	int harm, harmtosum, stage;
+	int numkern, fftlen;
+	numkern = subharminfs[0][0].numkern;
+	fftlen = subharminfs[0][0].kern[0][0].fftlen;
+
+	cufftDestroy(plan_pdata_gpu_array[0][0]);
+	cufftDestroy(plan_tmpdat_gpu_array[0][0]);
+
+    if (numharmstages > 1  && !inmem) {
+        for(stage=1; stage<numharmstages; stage++){	
+            harmtosum = 1 << stage;		
+            for (harm = 1; harm < harmtosum; harm += 2)
+            {
+                numkern = subharminfs[stage][harm-1].numkern;
+                fftlen = subharminfs[stage][harm-1].kern[0][0].fftlen;
+                cufftDestroy(plan_pdata_gpu_array[stage][harm-1]);
+                cufftDestroy(plan_tmpdat_gpu_array[stage][harm-1]);
+            }
+        }
+    }
+}
+
+
+float * prep_result_on_gpu(subharminfo **subharminfs, int numharmstages)
+//cudaMalloc d_result for the whole search process
+{
+
+	int harm, harmtosum, stage;		
+	int numkern, fftlen;
+	int size_d_result;
+	
+	float *d_result;	
+	size_d_result = 0;
+
+	numkern = subharminfs[0][0].numkern;
+	fftlen = subharminfs[0][0].kern[0][0].fftlen;
+
+	size_d_result = numkern * fftlen;
+
+	if (numharmstages > 1) {
+		for(stage=1; stage<numharmstages; stage++){	
+			harmtosum = 1 << stage;		
+			for (harm = 1; harm < harmtosum; harm += 2) {               			
+				numkern = subharminfs[stage][harm-1].numkern;
+				fftlen = subharminfs[stage][harm-1].kern[0][0].fftlen;
+									
+				if(size_d_result < numkern * fftlen )
+				{
+					size_d_result = numkern * fftlen;
+				}			
+			}	
+		}	
+	}
+		//Alloc mem for result on GPU  
+  	cudaMalloc((void **)&d_result, size_d_result * sizeof(float));  
+	return d_result ;
+}
 
 ffdotpows *copy_ffdotpows(ffdotpows * orig)
 {
@@ -1257,7 +1614,6 @@ void add_ffdotpows(ffdotpows * fundamental,
 {
     int ii, jj, kk, ww, rind, zind, wind, subw;
     const double harm_fract = (double) harmnum / (double) numharm;
-    
     for (ii = 0; ii < fundamental->numws; ii++) {
         ww = fundamental->wlo + ii * ACCEL_DW;
         subw = calc_required_w(harm_fract, ww);
@@ -1315,6 +1671,7 @@ void inmem_add_ffdotpows(ffdotpows * fundamental, accelobs * obs,
         int ii, rrint;
         for (ii = 0, rrint = ACCEL_RDR * rlo; ii < numrs; ii++, rrint++)
             rinds[ii] = (int) (rrint * harm_fract + 0.5);
+        // exit(0);
     }
 
     // Now add all the powers
@@ -1324,8 +1681,8 @@ void inmem_add_ffdotpows(ffdotpows * fundamental, accelobs * obs,
     {
         const int zlo = fundamental->zlo;
         const long long rlen = (obs->highestbin + obs->corr_uselen) * ACCEL_RDR;
-        float *powptr = fundamental->powers[0][0];
-        float *fdp = obs->ffdotplane;
+        float *powptr = fundamental->powers[0][0]; //output data
+        float *fdp = obs->ffdotplane; //input data
         int ii, jj, zz, zind, subz;
         float *inpows, *outpows;
         long long offset;
@@ -1348,6 +1705,46 @@ void inmem_add_ffdotpows(ffdotpows * fundamental, accelobs * obs,
         }
     }
     vect_free(rinds);
+}
+
+void get_rinds_gpu(ffdotpows * fundamental, int *rinds_gpu, int numharmstages)
+{
+    int *rinds_cpu;
+    int *rinds;
+    cudaMallocHost((void**)&rinds_cpu, sizeof(int)*fundamental->numrs*(pow(2,numharmstages)-1));
+    int stage;
+    const int rlo = fundamental->rlo;
+    // printf("rlo %d \n", rlo);
+    // exit(0);
+    const int numrs = fundamental->numrs;
+
+    int harm;
+    int ii, rrint,kk=0;
+    for (stage = 1; stage < numharmstages; stage++)
+    {
+        int harmtosum = 1 << stage;
+        for (harm = 1; harm < harmtosum; harm += 2)
+        {
+            const double harm_fract = (double) harm / (double) harmtosum;
+            rinds = rinds_cpu+kk*numrs;
+            for (ii = 0, rrint = ACCEL_RDR * rlo; ii < numrs; ii++, rrint++)
+            // for (ii = 0, rrint = 0; ii < numrs; ii++, rrint++)
+                rinds[ii] = (int) (rrint * harm_fract + 0.5);
+            kk++;
+        }   
+    }
+    cudaMemcpy(rinds_gpu, rinds_cpu, sizeof(int)*numrs*(pow(2,numharmstages)-1), cudaMemcpyHostToDevice);
+    cudaFree(rinds_cpu);
+}
+
+void inmem_add_subharm_gpu(ffdotpows * fundamental, accelobs * obs, float *outpows_gpu, float *outpows_gpu_obs, int stage, int *rinds_gpu)
+{
+    const int numrs = fundamental->numrs;
+    const int numzs = fundamental->numzs;
+    const int zlo = fundamental->zlo;
+    long long rlen = (obs->highestbin + obs->corr_uselen) * ACCEL_RDR;
+
+    inmem_add_ffdotpows_gpu_gpu(outpows_gpu_obs, outpows_gpu, rinds_gpu, zlo, numrs, numzs, stage, rlen);
 }
 
 
@@ -1444,6 +1841,47 @@ GSList *search_ffdotpows(ffdotpows * ffdot, int numharm,
     }
     return cands;
 }
+
+GSList *search_ffdotpows_sort_gpu_result(ffdotpows * ffdot, int numharm,
+                         accelobs * obs, GSList * cands, accel_cand_gpu *cand_gpu_cpu, int nof_cand)
+{
+   int ii, jj;
+   float powcut;
+   long long numindep;
+
+   powcut = obs->powcut[twon_to_index(numharm)];
+   numindep = obs->numindep[twon_to_index(numharm)];	
+   
+   float pow, sig;
+   double rr, zz, ww;
+   int added = 0;   
+   
+   int rind, zind;
+   
+   if(nof_cand > 0)
+   {
+   		for(ii=0; ii< nof_cand; ii++)
+   		{   	
+   			added = 0;      			
+   			pow = cand_gpu_cpu[ii].pow; 
+   			sig = candidate_sigma(pow, numharm, numindep);   						
+   			zind = cand_gpu_cpu[ii].z_ind;
+   			rind = cand_gpu_cpu[ii].r_ind;     			
+   			rr = (ffdot->rlo + rind * (double) ACCEL_DR) / (double) numharm;   			
+   			zz = (ffdot->zlo + zind * (double) ACCEL_DZ) / (double) numharm;
+   			ww = 0.0;
+   			// cands = insert_new_accelcand(cands, pow, sig, numharm, rr, zz, &added);
+            cands = insert_new_accelcand(cands, pow, sig, numharm, rr, zz, ww, &added);
+   			if (added && !obs->dat_input)
+               fprintf(obs->workfile,
+                                "%-7.2f  %-7.4f  %-2d  %-14.4f  %-14.9f  %-10.4f %-10.4f\n",
+                                pow, sig, numharm, rr, rr / obs->T, zz, ww);
+   		}  		   		
+   }
+   
+   return cands;
+}
+
 
 void deredden(fcomplex * fft, int numamps)
 /* Attempt to remove rednoise from a time series by using   */
@@ -1545,9 +1983,18 @@ void create_accelobs(accelobs * obs, infodata * idata, Cmdline * cmd, int usemma
                 obs->mmap_file = 0;
                 if (strcmp(suffix, "sdat") == 0)
                     input_shorts = 1;
-            } else {
+            }
+            else {
                 obs->dat_input = 0;
             }
+
+            // if(strcmp(suffix, "fft") == 0 && obs->cudaP) 
+            // {
+            //     printf("\nInput file ('%s') must be an '.[s]dat' file  with CUDA !\n\n",cmd->argv[0]);
+            //     free(suffix);
+            //     exit(0);
+            // }
+
             free(suffix);
         } else {
             printf("\nInput file ('%s') must be an '.fft' or '.[s]dat' file!\n\n",
@@ -1555,6 +2002,8 @@ void create_accelobs(accelobs * obs, infodata * idata, Cmdline * cmd, int usemma
             exit(0);
         }
     }
+
+
 
     if (cmd->noharmpolishP)
         obs->use_harmonic_polishing = 0;
@@ -1570,7 +2019,7 @@ void create_accelobs(accelobs * obs, infodata * idata, Cmdline * cmd, int usemma
     } else {
         printf("Analyzing data from '%s'.\n\n", cmd->argv[0]);
     }
-
+    obs->cudaP = cmd->cudaP;
     /* Prepare the input time series if required */
 
     if (obs->dat_input) {
@@ -1844,22 +2293,23 @@ void create_accelobs(accelobs * obs, infodata * idata, Cmdline * cmd, int usemma
         long long memuse;
         double gb = (double) (1L << 30);
 
-        // This is the size of powers covering the full f-dot-dot plane to search
-        // Need the extra obs->corr_uselen since we generate the plane in blocks
         if (cmd->wmaxP) {
             memuse = sizeof(float) * (obs->highestbin + obs->corr_uselen)
                 * obs->numbetween * obs->numz * obs->numw;
-            printf("Full f-dot-dot volume would need %.2f GB: ", (float) memuse / gb);
         } else {
             memuse = sizeof(float) * (obs->highestbin + obs->corr_uselen)
                 * obs->numbetween * obs->numz;
-            printf("Full f-fdot plane would need %.2f GB: ", (float) memuse / gb);
         }
 
-        if (!cmd->wmaxP && (memuse < MAXRAMUSE || cmd->inmemP)) {
+        // This is the size of powers covering the full f-dot-dot plane to search
+        // Need the extra obs->corr_uselen since we generate the plane in blocks
+        if (!cmd->wmaxP && cmd->inmemP) 
+        // if (!cmd->wmaxP &&  cmd->inmemP) 
+        {
             printf("using in-memory accelsearch.\n\n");
             obs->inmem = 1;
-            obs->ffdotplane = gen_fvect(memuse / sizeof(float));
+            if(!cmd->cudaP)
+                obs->ffdotplane = gen_fvect(memuse / sizeof(float));
         } else {
             printf("using standard accelsearch.\n\n");
             obs->inmem = 0;
@@ -1887,7 +2337,7 @@ void free_accelobs(accelobs * obs)
         free(obs->lobins);
         free(obs->hibins);
     }
-    if (obs->inmem) {
+    if (obs->inmem && !obs->cudaP) {
         vect_free(obs->ffdotplane);
     }
 }

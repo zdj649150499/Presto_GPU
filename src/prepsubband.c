@@ -9,6 +9,9 @@
 #include <device_launch_parameters.h>
 #include <cuda.h>
 
+#include "cuda.cuh"
+
+
 // Use OpenMP
 #ifdef _OPENMP
 #include <omp.h>
@@ -36,6 +39,11 @@ static int read_PRESTO_subbands(FILE * infiles[], int numfiles,
                                 float *subbanddata, double timeperblk,
                                 int *maskchans, int *nummasked, mask * obsmask,
                                 float clip_sigma, float *padvals);
+static int read_PRESTO_subbands_GPU(FILE * infiles[], int numfiles,
+                                float *subbanddata, double timeperblk,
+                                int *maskchans, int *nummasked, mask * obsmask,
+                                float clip_sigma, float *padvals);
+
 static int get_data(float **outdata, int blocksperread,
                     struct spectra_info *s,
                     mask * obsmask, int *idispdts, int **offsets,
@@ -44,14 +52,15 @@ static void update_infodata(infodata * idata, long datawrote, long padwrote,
                             int *barybins, int numbarybins, int downsamp);
 static void print_percent_complete(int current, int number);
 
-extern void select_cuda_dev(int cuda_inds);
-extern void Endup_GPU();
-extern void DedispersionOnGPU(float *oridata_gpu, float *outdata_gpu,  int worklen, int bs, int nsub, int numdms, int *offsets);
 
 
-float *oridata_gpu, *outdata_gpu;
+
+float *outdata_gpu;
+short *outdata_bk;
 int *offsets_gpu;
-int gpu_worklen;
+int *idispdt_gpu;
+
+int gpu_worklen, gpu_dsworklen;
 
 
 /* From CLIG */
@@ -148,9 +157,9 @@ int main(int argc, char *argv[])
 #endif
 
     if(cmd->cudaP == 1)
-   {
+    {
       select_cuda_dev(cmd->cuda);
-   }
+    }
 
 
     printf("\n\n");
@@ -195,8 +204,6 @@ int main(int argc, char *argv[])
         printf("\n");
         if (RAWDATA) {
             read_rawdata_files(&s);
-            if(cmd->cudaP)
-                cmd->nsub = s.num_channels;
             // Make sure that the requested number of subbands divides into the
             // the raw number of channels.
             if (s.num_channels % cmd->nsub) {
@@ -284,7 +291,7 @@ int main(int argc, char *argv[])
             avgdm += dms[ii];
             sprintf(datafilenm, "%s_DM%.*f.dat", cmd->outfile, dmprecision, dms[ii]);
             outfiles[ii] = chkfopen(datafilenm, "wb");
-            printf("   '%s'\n", datafilenm);
+            // printf("   '%s'\n", datafilenm);
         }
         avgdm /= cmd->numdms;
         maxdm = dms[cmd->numdms - 1];
@@ -310,7 +317,7 @@ int main(int argc, char *argv[])
         for (ii = 0; ii < cmd->nsub; ii++) {
             sprintf(datafilenm, format_str, cmd->outfile, dmprecision, avgdm, ii);
             outfiles[ii] = chkfopen(datafilenm, "wb");
-            printf("   '%s'\n", datafilenm);
+            // printf("   '%s'\n", datafilenm);
         }
     }
 
@@ -327,17 +334,6 @@ int main(int argc, char *argv[])
     /* The number of topo to bary time points to generate with TEMPO */
     numbarypts = (int) (s.T * 1.1 / TDT + 5.5) + 1;
     
-
-    if(cmd->cudaP)
-    {
-        gpu_worklen = s.spectra_per_subint * blocksperread;
-        gpu_worklen /= (cmd->downsamp);
-            
-        cudaMalloc((void**)&oridata_gpu, sizeof(float)*gpu_worklen*cmd->downsamp*cmd->nsub*2);
-        cudaMalloc((void**)&outdata_gpu, sizeof(float)*gpu_worklen*cmd->numdms);
-        cudaMalloc((void**)&offsets_gpu, sizeof(int)*cmd->numdms*cmd->nsub);
-    }
-
     // Identify the TEMPO observatory code
     {
         char *outscope = (char *) calloc(40, sizeof(char));
@@ -414,15 +410,11 @@ int main(int argc, char *argv[])
             subdispdt = subband_delays(s.num_channels, cmd->nsub, dms[ii],
                                        idata.freq, idata.chan_wid, 0.0);
             dtmp = subdispdt[cmd->nsub - 1];
-            // if(!cmd->cudaP)
             for (jj = 0; jj < cmd->nsub; jj++)
                 offsets[ii][jj] = NEAREST_LONG((subdispdt[jj] - dtmp) / dsdt);
-            // else
-            // for (jj = 0; jj < cmd->nsub; jj++)
-            //     offsets[ii][jj] = NEAREST_LONG((subdispdt[jj] - dtmp));
             vect_free(subdispdt);
         }
-
+        
         /* Allocate our data array and start getting data */
 
         printf("\nDe-dispersing using:\n");
@@ -543,15 +535,10 @@ int main(int argc, char *argv[])
             subdispdt = subband_delays(s.num_channels, cmd->nsub, dms[ii],
                                        idata.freq, idata.chan_wid, avgvoverc);
             dtmp = subdispdt[cmd->nsub - 1];
-            // if(!cmd->cudaP)
             for (jj = 0; jj < cmd->nsub; jj++)
                 offsets[ii][jj] = NEAREST_LONG((subdispdt[jj] - dtmp) / dsdt);
-            // else
-            // for (jj = 0; jj < cmd->nsub; jj++)
-            //     offsets[ii][jj] = NEAREST_LONG((subdispdt[jj] - dtmp));
             vect_free(subdispdt);
         }
-
         /* Convert the bary TOAs to differences from the topo TOAs in */
         /* units of bin length (dt) rounded to the nearest integer.   */
 
@@ -821,9 +808,6 @@ int main(int argc, char *argv[])
     if(cmd->cudaP == 1)
     {
         Endup_GPU();
-        cudaFree(oridata_gpu);
-        cudaFree(outdata_gpu);
-        cudaFree(offsets_gpu);
     }
 
 
@@ -921,7 +905,7 @@ static int read_PRESTO_subbands(FILE * infiles[], int numfiles,
 
     /* Clip nasty RFI if requested and we're not masking all the channels */
     if ((clip_sigma > 0.0) && !(mask && (*nummasked == -1))) {
-        clip_times(subbanddata, SUBSBLOCKLEN, numfiles, clip_sigma, padvals);
+        clip_times(subbanddata, SUBSBLOCKLEN, numfiles, clip_sigma, padvals, cmd->ncpus);
     }
 
     /* Mask it if required */
@@ -963,6 +947,82 @@ static int read_PRESTO_subbands(FILE * infiles[], int numfiles,
 }
 
 
+static int read_PRESTO_subbands_GPU(FILE * infiles[], int numfiles,
+                                float *subbanddata, double timeperblk,
+                                int *maskchans, int *nummasked, mask * obsmask,
+                                float clip_sigma, float *padvals)
+/* Read short int subband data written by prepsubband */
+{
+    int ii, jj, index, numread = 0, mask = 0;
+    short subsdata[SUBSBLOCKLEN];
+    double starttime, run_avg;
+    static int currentblock = 0;
+    float *subbanddata_CPU = gen_fvect(numfiles*SUBSBLOCKLEN);
+
+    if (obsmask->numchan)
+        mask = 1;
+
+    /* Read the data */
+    for (ii = 0; ii < numfiles; ii++) {
+        numread = chkfread(subsdata, sizeof(short), SUBSBLOCKLEN, infiles[ii]);
+        run_avg = 0.0;
+        if (cmd->runavgP == 1) {
+            for (jj = 0; jj < numread; jj++)
+                run_avg += (float) subsdata[jj];
+            run_avg /= numread;
+        }
+        for (jj = 0, index = ii; jj < numread; jj++, index += numfiles)
+            subbanddata_CPU[index] = (float) subsdata[jj] - run_avg;
+        for (jj = numread; jj < SUBSBLOCKLEN; jj++, index += numfiles)
+            subbanddata_CPU[index] = 0.0;
+    }
+
+    if (mask) {
+        starttime = currentblock * timeperblk;
+        *nummasked = check_mask(starttime, timeperblk, obsmask, maskchans);
+    }
+
+    /* Clip nasty RFI if requested and we're not masking all the channels */
+    if ((clip_sigma > 0.0) && !(mask && (*nummasked == -1))) {
+        clip_times(subbanddata_CPU, SUBSBLOCKLEN, numfiles, clip_sigma, padvals, cmd->ncpus);
+    }
+    cudaMemcpy(subbanddata, subbanddata_CPU, sizeof(float)*numfiles*SUBSBLOCKLEN, cudaMemcpyHostToDevice);
+
+    vect_free(subbanddata_CPU);
+
+    /* Mask it if required */
+    if (mask && numread) {
+        if (*nummasked == -1) { /* If all channels are masked */
+            for (ii = 0; ii < SUBSBLOCKLEN; ii++)
+                cudaMemcpy(subbanddata + ii * numfiles, padvals, sizeof(float)*numfiles, cudaMemcpyHostToDevice);
+        } else if (*nummasked > 0) {    /* Only some of the channels are masked */
+            float *padvals_gpu;
+            int *maskchans_gpu;
+            
+            cudaMalloc((void**)&padvals_gpu, sizeof(float)*numfiles);
+            cudaMalloc((void**)&maskchans_gpu, sizeof(int)*(*nummasked));
+
+            cudaMemcpy(padvals_gpu, padvals, sizeof(float)*numfiles, cudaMemcpyHostToDevice);
+            cudaMemcpy(maskchans_gpu, maskchans, sizeof(int)*(*nummasked), cudaMemcpyHostToDevice);
+
+            SetSubData4Mask_GPU(subbanddata, padvals_gpu, maskchans_gpu,SUBSBLOCKLEN, numfiles);
+
+            cudaFree(padvals_gpu);
+            cudaFree(maskchans_gpu);
+        }
+    }
+
+    /* Zero-DM removal if required */
+    if (cmd->zerodmP == 1)
+        ZeroDM_subchan_GPU(subbanddata, SUBSBLOCKLEN, numfiles);
+
+    currentblock += 1;
+    
+    return numread;
+}
+
+
+
 
 static int get_data(float **outdata, int blocksperread,
                     struct spectra_info *s,
@@ -976,81 +1036,56 @@ static int get_data(float **outdata, int blocksperread,
     static double blockdt;
     int totnumread = 0, numread = 0, ii, jj, tmppad = 0, nummasked = 0;
 
-    if (firsttime) {
-        if (cmd->maskfileP)
-            maskchans = gen_ivect(s->num_channels);
-        worklen = s->spectra_per_subint * blocksperread;
-        dsworklen = worklen / cmd->downsamp;
-        // if(cmd->cudaP)  dsworklen *= cmd->downsamp;
-        // Make sure that our working blocks are long enough...
-        // for (ii = 0; ii < cmd->numdms; ii++) {
-        //     for (jj = 0; jj < cmd->nsub; jj++) {
-        //         if (offsets[ii][jj] > dsworklen)
-        //             printf
-        //                 ("WARNING!:  (offsets[%d][%d] = %d) > (dsworklen = %d)\n",
-        //                  ii, jj, offsets[ii][jj], dsworklen);
-        //     }
-        // }
+    
+    if(!cmd->cudaP)  // getdata on CPU
+    {
+        if (firsttime) {
+            if (cmd->maskfileP)
+                maskchans = gen_ivect(s->num_channels);
+            worklen = s->spectra_per_subint * blocksperread;
+            dsworklen = worklen / cmd->downsamp;
 
-        blocksize = s->spectra_per_subint * cmd->nsub;
-        blockdt = s->spectra_per_subint * s->dt;
-        if(!cmd->cudaP)
-        {
+            blocksize = s->spectra_per_subint * cmd->nsub;
+            blockdt = s->spectra_per_subint * s->dt;
+
             data1 = gen_fvect(cmd->nsub * worklen);
             data2 = gen_fvect(cmd->nsub * worklen);
-        }
-        else
-        {
-            cudaMallocHost((void**)&data1, sizeof(float)*cmd->nsub * worklen);
-            cudaMallocHost((void**)&data2, sizeof(float)*cmd->nsub * worklen);
-        }
-
-        currentdata = data1;
-        lastdata = data2;
-        if (cmd->downsamp > 1) {
-            dsdata1 = gen_fvect(cmd->nsub * dsworklen);
-            dsdata2 = gen_fvect(cmd->nsub * dsworklen);
-            currentdsdata = dsdata1;
-            lastdsdata = dsdata2;
-        } else {
-            currentdsdata = data1;
-            lastdsdata = data2;
-        }
-    }
-    while (1) {
-        if (RAWDATA || insubs) {
-            for (ii = 0; ii < blocksperread; ii++) {
-                if (RAWDATA)
-                {
-                    if(s->num_channels ==  cmd->nsub && cmd->cudaP)
-                    {
-                        if(!s->get_rawblock(currentdata + ii * blocksize, s, &tmppad))
-                            numread = 0;
-                        else numread = s->spectra_per_subint;
-                    }
-                    else 
-                    numread = read_subbands(currentdata + ii * blocksize, idispdts,
-                                            cmd->nsub, s, 0, &tmppad,
-                                            maskchans, &nummasked, obsmask);
-                }
-                else if (insubs)
-                    numread = read_PRESTO_subbands(s->files, s->num_files,
-                                                   currentdata + ii * blocksize,
-                                                   blockdt, maskchans, &nummasked,
-                                                   obsmask, cmd->clip, s->padvals);
-                if (!firsttime)
-                    totnumread += numread;
-                if (numread != s->spectra_per_subint) {
-                    for (jj = ii * blocksize; jj < (ii + 1) * blocksize; jj++)
-                        currentdata[jj] = 0.0;
-                }
-                if (tmppad)
-                    *padding = 1;
+            currentdata = data1;
+            lastdata = data2;
+            if (cmd->downsamp > 1) {
+                dsdata1 = gen_fvect(cmd->nsub * dsworklen);
+                dsdata2 = gen_fvect(cmd->nsub * dsworklen);
+                currentdsdata = dsdata1;
+                lastdsdata = dsdata2;
+            } else {
+                currentdsdata = data1;
+                lastdsdata = data2;
             }
         }
-        /* Downsample the subband data if needed */
-        if(!cmd->cudaP)
-        {
+        while (1) {
+            if (RAWDATA || insubs) {
+                for (ii = 0; ii < blocksperread; ii++) {
+                    if (RAWDATA)
+                        numread = read_subbands(currentdata + ii * blocksize, idispdts,
+                                                cmd->nsub, s, 0, &tmppad,
+                                                maskchans, &nummasked, obsmask);
+                    else if (insubs)
+                        numread = read_PRESTO_subbands(s->files, s->num_files,
+                                                    currentdata + ii * blocksize,
+                                                    blockdt, maskchans, &nummasked,
+                                                    obsmask, cmd->clip, s->padvals);
+                    if (!firsttime)
+                        totnumread += numread;
+                    if (numread != s->spectra_per_subint) {
+                        for (jj = ii * blocksize; jj < (ii + 1) * blocksize; jj++)
+                            currentdata[jj] = 0.0;
+                    }
+                    if (tmppad)
+                        *padding = 1;
+                }
+            }          
+            /* Downsample the subband data if needed */
+            /* freq first */
             if (cmd->downsamp > 1) {
                 int kk, index;
                 float ftmp;
@@ -1065,20 +1100,19 @@ static int get_data(float **outdata, int blocksperread,
                             ftmp += currentdata[index];
                             index += cmd->nsub;
                         }
-                        currentdsdata[dsindex] += ftmp / cmd->downsamp;
+                        currentdsdata[dsindex] = ftmp / cmd->downsamp;
                     }
                 }
-            }
+            }      
+
+            if (firsttime) {
+                SWAP(currentdata, lastdata);
+                SWAP(currentdsdata, lastdsdata);
+                firsttime = 0;
+            } else
+                break;
         }
-        if (firsttime) {
-            SWAP(currentdata, lastdata);
-            SWAP(currentdsdata, lastdsdata);
-            firsttime = 0;
-        } else
-            break;
-    }
-    if(!cmd->cudaP)
-    {
+
         if (!cmd->subP) {
             for (ii = 0; ii < cmd->numdms; ii++)
                 float_dedisp(currentdsdata, lastdsdata, dsworklen,
@@ -1093,58 +1127,127 @@ static int get_data(float **outdata, int blocksperread,
                 }
             }
         }
-    }
-    /*Do downsamp and de-dispersion on GPU*/
-    if(cmd->cudaP)
-    {   
-        if(!cmd->subP)
-        {
-            cudaMemcpy(oridata_gpu, lastdata, sizeof(float)*gpu_worklen*cmd->downsamp*cmd->nsub, cudaMemcpyHostToDevice);                  //GPU get data
-            cudaMemcpy(oridata_gpu+gpu_worklen*cmd->downsamp*cmd->nsub, currentdata, sizeof(float)*gpu_worklen*cmd->downsamp*cmd->nsub, cudaMemcpyHostToDevice);   //GPU get data
-            for(ii=0; ii<cmd->numdms; ii++)
-                cudaMemcpy(offsets_gpu+cmd->nsub*ii, offsets[ii], sizeof(int)*cmd->nsub, cudaMemcpyHostToDevice);   //CPU get out data
-
-            DedispersionOnGPU(oridata_gpu, outdata_gpu,  gpu_worklen, cmd->downsamp, cmd->nsub, cmd->numdms, offsets_gpu);
-            for(ii=0; ii<cmd->numdms; ii++)
-                cudaMemcpy(outdata[ii], outdata_gpu+gpu_worklen*ii, sizeof(float)*gpu_worklen, cudaMemcpyDeviceToHost);   //CPU get out data
-            
-            // for(ii=0;ii<100;ii++)
-            // {
-            //     printf("%d %f\n",ii,outdata[0][ii]);
-            // }
-        }
-        else
-        {
-            /* Input format is sub1[0], sub2[0], sub3[0], ..., sub1[1], sub2[1], sub3[1], ... */
-            float infloat;
-            for (ii = 0; ii < cmd->nsub; ii++) {
-                for (jj = 0; jj < dsworklen; jj++) {
-                    infloat = lastdsdata[ii + (cmd->nsub * jj)];
-                    subsdata[ii][jj] = (short) (infloat + 0.5);
-                }
+        SWAP(currentdata, lastdata);
+        SWAP(currentdsdata, lastdsdata);
+        if (totnumread != worklen) {
+            if (cmd->maskfileP)
+                vect_free(maskchans);
+            vect_free(data1);
+            vect_free(data2);
+            if (cmd->downsamp > 1) {
+                vect_free(dsdata1);
+                vect_free(dsdata2);
             }
         }
     }
+    else if(cmd->cudaP)            // getdata on GPU
+    {
+        if (firsttime) {
+            if (cmd->maskfileP)
+                maskchans = gen_ivect(s->num_channels);
+            worklen = s->spectra_per_subint * blocksperread;
+            dsworklen = worklen / cmd->downsamp;
 
-    SWAP(currentdata, lastdata);
-    SWAP(currentdsdata, lastdsdata);
-    if (totnumread != worklen) {
-        if (cmd->maskfileP)
-            vect_free(maskchans);
-        if(!cmd->cudaP)
-        {
-            vect_free(data1);
-            vect_free(data2);
+            blocksize = s->spectra_per_subint * cmd->nsub;
+            blockdt = s->spectra_per_subint * s->dt;
+
+            gpu_worklen = worklen;
+            gpu_dsworklen = dsworklen;
+                
+            cudaMalloc((void**)&data1, sizeof(float)*cmd->nsub*gpu_worklen);
+            cudaMalloc((void**)&data2, sizeof(float)*cmd->nsub*gpu_worklen);
+            cudaMalloc((void**)&idispdt_gpu, sizeof(int)*s->num_channels);
+            cudaMalloc((void**)&offsets_gpu, sizeof(int)*cmd->numdms*cmd->nsub);
+            cudaMalloc((void**)&outdata_gpu, sizeof(float)*cmd->numdms*gpu_dsworklen);
+
+            cudaMemcpy(idispdt_gpu, idispdts, sizeof(int)*s->num_channels, cudaMemcpyHostToDevice);
+            for (ii = 0; ii < cmd->numdms; ii++) {
+                cudaMemcpy(offsets_gpu+ii*cmd->nsub, offsets[ii], sizeof(int)*(cmd->nsub), cudaMemcpyHostToDevice);
+            }
+            currentdata = data1;
+            lastdata = data2;
+            if (cmd->downsamp > 1) {
+                cudaMalloc((void**)&dsdata1, sizeof(float)*cmd->nsub*gpu_dsworklen);
+                cudaMalloc((void**)&dsdata2, sizeof(float)*cmd->nsub*gpu_dsworklen);
+                currentdsdata  = dsdata1;
+                lastdsdata  = dsdata2;
+            } else {
+                currentdsdata  = data1;
+                lastdsdata  = data2;
+            }
+
+        }
+        while (1) {
+            if (RAWDATA || insubs)
+            {
+                for (ii = 0; ii < blocksperread; ii++) 
+                {
+                    if (RAWDATA)
+                        numread = read_subbands_GPU(currentdata + ii * blocksize, idispdt_gpu, cmd->nsub, s, 0, &tmppad, maskchans, &nummasked, obsmask);
+                    else if (insubs)
+                            numread = read_PRESTO_subbands_GPU(s->files, s->num_files,
+                                                        currentdata + ii * blocksize,
+                                                        blockdt, maskchans, &nummasked,
+                                                        obsmask, cmd->clip, s->padvals);
+                    if (!firsttime)
+                        totnumread += numread;
+                    if (numread != s->spectra_per_subint) {
+                        cudaMemset(currentdata+ii * blocksize, 0.0f, sizeof(float)*blocksize);
+                    }
+                    if (tmppad)
+                        *padding = 1;
+                }
+            }
+
+            /* Downsample the subband data if needed */
+            if (cmd->downsamp > 1)
+                downsamp_GPU(currentdata, currentdsdata, cmd->nsub, dsworklen, cmd->downsamp); 
+
+            if (firsttime) {
+                SWAP(currentdata, lastdata);
+                SWAP(currentdsdata, lastdsdata);
+                firsttime = 0;
+            } else
+                break;
+        }
+
+        if (!cmd->subP) {
+            float_dedisp_GPU(currentdsdata, lastdsdata, dsworklen,
+                        cmd->nsub, offsets_gpu, 0.0, outdata_gpu, cmd->numdms);
+            /*Do downsamp and de-dispersion on GPU*/
+            for(ii=0; ii<cmd->numdms; ii++)
+                cudaMemcpy(outdata[ii], outdata_gpu+gpu_dsworklen*ii, sizeof(float)*gpu_dsworklen, cudaMemcpyDeviceToHost);   //CPU get out data
         }
         else
         {
-            cudaFreeHost(data1);
-            cudaFreeHost(data2);
+            if(firsttime)
+                cudaMalloc((void**)&outdata_bk, sizeof(short)*cmd->nsub*dsworklen);
+
+            Get_subsdata(lastdsdata, outdata_bk, cmd->nsub, dsworklen);
+            for(ii=0;ii<cmd->nsub;ii++)
+            {
+                cudaMemcpy(subsdata[ii], outdata_bk+dsworklen*ii, sizeof(short)*dsworklen, cudaMemcpyDeviceToHost);   //CPU get out data
+            }
         }
 
-        if (cmd->downsamp > 1) {
-            vect_free(dsdata1);
-            vect_free(dsdata2);
+
+        SWAP(currentdata, lastdata);
+        SWAP(currentdsdata, lastdsdata);
+        if (totnumread != worklen) {
+            if (cmd->maskfileP)
+                vect_free(maskchans);
+            
+            cudaFree(idispdt_gpu);
+            cudaFree(offsets_gpu);
+            cudaFree(outdata_gpu);
+            cudaFree(data1);
+            cudaFree(data2);
+            if (cmd->downsamp > 1) {
+                cudaFree(dsdata1);
+                cudaFree(dsdata2);
+            }
+            if (!cmd->subP)
+                cudaFree(outdata_bk);
         }
     }
     return totnumread;

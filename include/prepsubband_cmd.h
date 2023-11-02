@@ -8,28 +8,6 @@
   (C) 1995-2004 Harald Kirsch (clig@geggus.net)
 *****/
 
-#define Cmdline Cmdline_prepsubband
-#define showOptionValues showOptionValues_prepsubband
-#define usage usage_prepsubband
-#define parseCmdline parseCmdline_prepsubband
-#define getIntOpt getIntOpt_preps
-#define getIntOpts getIntOpts_preps
-#define getLongOpt getLongOpt_preps
-#define getLongOpts getLongOpts_preps
-#define getFloatOpt getFloatOpt_preps
-#define getFloatOpts getFloatOpts_preps
-#define getDoubleOpt getDoubleOpt_preps
-#define getDoubleOpts getDoubleOpts_preps
-#define getStringOpt getStringOpt_preps
-#define getStringOpts getStringOpts_preps
-#define checkIntLower checkIntLower_preps
-#define checkIntHigher checkIntHigher_preps
-#define checkLongLower checkLongLower_preps
-#define checkLongHigher checkLongHigher_preps
-#define checkFloatLower checkFloatLower_preps
-#define checkFloatHigher checkFloatHigher_preps
-#define checkDoubleLower checkDoubleLower_preps
-#define checkDoubleHigher checkDoubleHigher_preps
 
 typedef struct s_Cmdline_preps {
   /***** -ncpus: Number of processors to use with OpenMP */

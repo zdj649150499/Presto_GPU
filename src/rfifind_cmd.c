@@ -26,6 +26,10 @@ static Cmdline cmd = {
   /* ncpusP = */ 1,
   /* ncpus = */ 1,
   /* ncpusC = */ 1,
+  /***** -cuda: Number of processors to use with CUDA */
+  /* cudaP = */ 0,
+  /* cudas = */ 0,
+  /* cudasC = */ 0,
   /***** -norficand: Do not search RFI cand by fft */
   /* norficandP = */ 0,
   /***** -o: Root of the output file names */
@@ -835,6 +839,17 @@ showOptionValues(void)
     }
   }
 
+  if( !cmd.cudaP ) {
+    printf("-cuda not found.\n");
+  } else {
+    printf("-cuda found:\n");
+    if( !cmd.cudaC ) {
+      printf("  no values\n");
+    } else {
+      printf("  value = `%d'\n", cmd.cuda);
+    }
+  }
+
     /***** -norficand: Do not search RFI cand by fft */
   if( !cmd.norficandP ) {
     printf("-norficand not found.\n");
@@ -1127,6 +1142,9 @@ usage(void)
   fprintf(stderr,"%s","         -ncpus: Number of processors to use with OpenMP\n");
   fprintf(stderr,"%s","                 1 int value between 1 and oo\n");
   fprintf(stderr,"%s","                 default: `1'\n");
+  fprintf(stderr,"%s","          -cuda: to run prepsubband on GPU, indicate the index of cuda device to be used, 0 means the 1st cuda device (nsub will set to numchannel of file, subchan de-disper will not usefull) \n");
+  fprintf(stderr,"%s","                 1 int value between 0 and oo\n");
+  fprintf(stderr,"%s","                 default: `0'\n");
   // fprintf(stderr,"%s","     -norficand: Do not search RFI cand by fft\n");
   fprintf(stderr,"%s","             -o: Root of the output file names\n");
   fprintf(stderr,"%s","                 1 char* value\n");
@@ -1204,6 +1222,16 @@ parseCmdline(int argc, char **argv)
       i = getIntOpt(argc, argv, i, &cmd.ncpus, 1);
       cmd.ncpusC = i-keep;
       checkIntHigher("-ncpus", &cmd.ncpus, cmd.ncpusC, 1);
+      continue;
+    }
+
+    if( 0==strcmp("-cuda", argv[i]) ) {
+      int keep = i;
+      cmd.cudaP = 1;
+      i = getIntOpt(argc, argv, i, &cmd.cuda, 1);
+      cmd.cudaC = i-keep;
+      // checkIntHigher("-ncpus", &cmd.ncpus, cmd.ncpusC, 1);
+      checkIntLower("-cuda", &cmd.cuda, cmd.cudaC, 0);
       continue;
     }
 

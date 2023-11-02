@@ -26,6 +26,10 @@ static Cmdline cmd = {
     /* ncpusP = */ 1,
     /* ncpus = */ 1,
     /* ncpusC = */ 1,
+  /***** -cuda: Number of processors to use with CUDA */
+  /* cudaP = */ 0,
+  /* cudas = */ 0,
+  /* cudasC = */ 0,
   /***** -lobin: The first Fourier frequency in the data file */
     /* lobinP = */ 1,
     /* lobin = */ 0,
@@ -825,7 +829,16 @@ void showOptionValues(void)
             printf("  value = `%d'\n", cmd.ncpus);
         }
     }
-
+    if( !cmd.cudaP ) {
+        printf("-cuda not found.\n");
+    } else {
+        printf("-cuda found:\n");
+        if( !cmd.cudaC ) {
+        printf("  no values\n");
+        } else {
+        printf("  value = `%d'\n", cmd.cuda);
+        }
+    }
   /***** -lobin: The first Fourier frequency in the data file */
     if (!cmd.lobinP) {
         printf("-lobin not found.\n");
@@ -1029,6 +1042,9 @@ void usage(void)
             "           -ncpus: Number of processors to use with OpenMP\n");
     fprintf(stderr, "%s", "                   1 int value between 1 and oo\n");
     fprintf(stderr, "%s", "                   default: `1'\n");
+    fprintf(stderr, "%s","            -cuda: to run prepsubband on GPU, indicate the index of cuda device to be used, 0 means the 1st cuda device (nsub will set to numchannel of file, subchan de-disper will not usefull) \n");
+    fprintf(stderr, "%s","                   1 int value between 0 and oo\n");
+    fprintf(stderr, "%s","                   default: `0'\n");
     fprintf(stderr, "%s",
             "           -lobin: The first Fourier frequency in the data file\n");
     fprintf(stderr, "%s", "                   1 int value between 0 and oo\n");
@@ -1112,6 +1128,16 @@ Cmdline *parseCmdline(int argc, char **argv)
             cmd.ncpusC = i - keep;
             checkIntHigher("-ncpus", &cmd.ncpus, cmd.ncpusC, 1);
             continue;
+        }
+
+        if( 0==strcmp("-cuda", argv[i]) ) {
+        int keep = i;
+        cmd.cudaP = 1;
+        i = getIntOpt(argc, argv, i, &cmd.cuda, 1);
+        cmd.cudaC = i-keep;
+        // checkIntHigher("-ncpus", &cmd.ncpus, cmd.ncpusC, 1);
+        checkIntLower("-cuda", &cmd.cuda, cmd.cudaC, 0);
+        continue;
         }
 
         if (0 == strcmp("-lobin", argv[i])) {

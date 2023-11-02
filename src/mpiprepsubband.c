@@ -885,7 +885,7 @@ static void convert_subbands(int numfiles, short *shortdata,
 
     /* Clip nasty RFI if requested and we're not masking all the channels */
     if ((clip_sigma > 0.0) && !(mask && (*nummasked == -1))) {
-        clip_times(subbanddata, SUBSBLOCKLEN, numfiles, clip_sigma, padvals);
+        clip_times(subbanddata, SUBSBLOCKLEN, numfiles, clip_sigma, padvals, 1);
     }
 
     /* Mask it if required */

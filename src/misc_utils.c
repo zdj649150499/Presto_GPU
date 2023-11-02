@@ -289,6 +289,7 @@ void telescope_to_tempocode(char *inname, char *outname, char *obscode)
         printf("                 Set default to FAST.\n");
         strcpy(obscode, "FA");
         strcpy(outname, "FAST");
+        strcpy(inname, "FAST");
     }
 }
 

@@ -622,7 +622,6 @@ double *subband_search_delays(int numchan, int numsubbands, double dm,
 void dedisp_subbands(float *data, float *lastdata,
                      int numpts, int numchan, 
                      int *delays, int numsubbands, float *result);
-void dedisp_subbandsGPU(float *data, float *lastdata, int numpts, int numchan, int *delays, int numsubbands, float *result);
 // De-disperse a stretch of data with numpts * numchan points into
 // numsubbands subbands.  Each time point for each subband is a float
 // in the result array.  The result array order is subbands of
@@ -1525,7 +1524,7 @@ int new_clip_times(float *rawdata, int ptsperblk, int numchan,
 
 /* Old Clipping Routine (uses channel medians) */
 int clip_times(float *rawdata, int ptsperblk, int numchan, 
-               float clip_sigma, float *good_chan_levels);
+               float clip_sigma, float *good_chan_levels, int thread);
 // Perform time-domain clipping of rawdata.  This is a 2D array with
 // ptsperblk*numchan points, each of which is a float.  The clipping
 // is done at clip_sigma sigma above/below the running mean.  The

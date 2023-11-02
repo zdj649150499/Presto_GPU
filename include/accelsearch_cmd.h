@@ -8,35 +8,15 @@
   (C) 1995-2004 Harald Kirsch (clig@geggus.net)
 *****/
 
-#define Cmdline Cmdline_accelsearch
-#define showOptionValues showOptionValues_accelsearch
-#define usage usage_accelsearch
-#define parseCmdline parseCmdline_accelsearch
-#define getIntOpt getIntOpt_accel
-#define getIntOpts getIntOpts_accel
-#define getLongOpt getLongOpt_accel
-#define getLongOpts getLongOpts_accel
-#define getFloatOpt getFloatOpt_accel
-#define getFloatOpts getFloatOpts_accel
-#define getDoubleOpt getDoubleOpt_accel
-#define getDoubleOpts getDoubleOpts_accel
-#define getStringOpt getStringOpt_accel
-#define getStringOpts getStringOpts_accel
-#define checkIntLower checkIntLower_accel
-#define checkIntHigher checkIntHigher_accel
-#define checkLongLower checkLongLower_accel
-#define checkLongHigher checkLongHigher_accel
-#define checkFloatLower checkFloatLower_accel
-#define checkFloatHigher checkFloatHigher_accel
-#define checkDoubleLower checkDoubleLower_accel
-#define checkDoubleHigher checkDoubleHigher_accel
-
-
 typedef struct s_Cmdline_accel {
   /***** -ncpus: Number of processors to use with OpenMP */
   char ncpusP;
   int ncpus;
   int ncpusC;
+  /***** -cuda: to run accelsearch on GPU, indicate the index of cuda device to be used, 0 means the 1st cuda device */
+  char cudaP;
+  int cuda;
+  int cudaC;
   /***** -lobin: The first Fourier frequency in the data file */
   char lobinP;
   int lobin;

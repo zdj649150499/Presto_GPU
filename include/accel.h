@@ -5,6 +5,8 @@
 #include "presto.h"
 #include "accelsearch_cmd.h"
 
+#include "cuda.cuh"
+
 // ACCEL_USELEN must be less than 65536 since we
 // use unsigned short ints to index our arrays...
 //
@@ -53,6 +55,7 @@ typedef struct accelobs{
     int dat_input;       /* The input file is a short time series */
     int mmap_file;       /* The file number if using MMAP */
     int inmem;           /* True if we want to keep the full f-fdot plane in RAM */
+    int cudaP;           /* Do accelsearch in GPU */
     int norm_type;       /* 0 = old-style block median, 1 = local-means power norm */
     double dt;           /* Data sample length (s) */
     double T;            /* Total observation length */
@@ -114,7 +117,7 @@ typedef struct subharminfo{
     int wmax;          /* The maximum Fourier f-dot-dot for this harmonic */
     int numkern_zdim;  /* Number of kernels calculated in the z dimension */
     int numkern_wdim;  /* Number of kernels calculated in the w dimension */
-    int numkern;       /* Total number of kernels in the vector */
+    int numkern;       /* Total number of kernels in the vector == numzs */
     kernel **kern;     /* A 2D array of the kernels themselves, with dimensions of z and w */
     unsigned short *rinds; /* Table of lookup indices for Fourier Freqs: subharmonic r values corresponding to "fundamental" r values */
     unsigned short *zinds; /* Table of lookup indices for Fourier F-dots */
@@ -131,6 +134,7 @@ typedef struct ffdotpows{
     unsigned short *rinds; /* Table of lookup indices for Fourier Freqs */
     unsigned short *zinds; /* Table of lookup indices for Fourier f-dots */
 } ffdotpows;
+
 
 /* accel_utils.c */
 
@@ -151,10 +155,24 @@ fcomplex *get_fourier_amplitudes(long long lobin, int numbins, accelobs *obs);
 ffdotpows *subharm_fderivs_vol(int numharm, int harmnum, 
 			       double fullrlo, double fullrhi, 
 			       subharminfo *shi, accelobs *obs);
+ffdotpows *ini_subharm_fderivs_vol(int numharm, int harmnum, 
+			       double fullrlo, double fullrhi, 
+			       subharminfo *shi, accelobs *obs);
+cufftComplex *cp_kernel_array_to_gpu(subharminfo **subharminfs, int numharmstages, int **offset_array);
+void *subharm_fderivs_vol_gpu(int numharm, int harmnum, 
+			       double fullrlo, double fullrhi, 
+			       subharminfo *shi, accelobs *obs, cufftComplex *fkern_gpu, cufftComplex *pdata_gpu, cufftComplex *tmpdat_gpu, cufftComplex *tmpout_gpu, float *outpows_gpu, float *outpows_gpu_obs, cufftComplex *pdata, int tip, unsigned short *zinds_gpu, unsigned short *rinds_gpu, unsigned short *zinds_cpu, unsigned short *rinds_cpu, ffdotpows *fundamental, int **offset_array, int stage, cufftComplex *data_gpu, float *powers);
+void init_cuFFT_plans(subharminfo **subharminfs, int numharmstages, int inmem);
+void destroy_cuFFT_plans(subharminfo **subharminfs, int numharmstages, int inmem);
+
+float * prep_result_on_gpu(subharminfo **subharminfs, int numharmstages);
 ffdotpows *copy_ffdotpows(ffdotpows *orig);
 void fund_to_ffdotplane(ffdotpows *ffd, accelobs *obs);
 void inmem_add_ffdotpows(ffdotpows *fundamental, accelobs *obs,
                          int numharm, int harmnum);
+void get_rinds_gpu(ffdotpows * fundamental, int *rinds_gpu, int numharmstages);
+void get_rind_zind_gpu(unsigned short *d_rinds_gpu, unsigned short *d_zinds_gpu, int numharmstages, accelobs obs, double fullrlo);
+void inmem_add_subharm_gpu(ffdotpows * fundamental, accelobs * obs, float *outpows_gpu, float *outpows_gpu_obs, int stage, int *rinds_gpu);
 void fund_to_ffdotplane_trans(ffdotpows *ffd, accelobs *obs);
 void inmem_add_ffdotpows_trans(ffdotpows *fundamental, accelobs *obs,
                                int numharm, int harmnum);
@@ -165,6 +183,8 @@ void add_ffdotpows(ffdotpows *fundamental, ffdotpows *subharmonic,
                    int numharm, int harmnum);
 GSList *search_ffdotpows(ffdotpows *ffdot, int numharm, 
                          accelobs *obs, GSList *cands);
+GSList *search_ffdotpows_sort_gpu_result(ffdotpows * ffdot, int numharm,
+                         accelobs * obs, GSList * cands, accel_cand_gpu *cand_gpu_cpu, int nof_cand);
 void free_accelobs(accelobs *obs);
 
 #endif

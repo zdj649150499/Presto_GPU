@@ -13,6 +13,10 @@ typedef struct s_Cmdline {
   char ncpusP;
   int ncpus;
   int ncpusC;
+  /***** -cuda: to run rfifind on GPU, indicate the index of cuda device to be used, 0 means the 1st cuda device */
+  char cudaP;
+  int cuda;
+  int cudaC;
   /***** -norficand: Do not search RFI cand by fft */
   char norficandP;
   /***** -o: Root of the output file names */

@@ -8,6 +8,8 @@
 #include <device_launch_parameters.h>
 #include <cuda.h>
 
+#include "cuda.cuh"
+
 // Use OpenMP
 #ifdef _OPENMP
 #include <omp.h>
@@ -1134,7 +1136,11 @@ int main(int argc, char *argv[])
 
         /* Move to the correct starting record */
 
-        data = gen_fvect(cmd->nsub * worklen);
+        // if(!cmd->cudaP)
+            data = gen_fvect(cmd->nsub * worklen);
+        // else if(cmd->cudaP && RAWDATA)
+            // cudaMalloc((void**)&data, sizeof(float)*cmd->nsub * worklen);
+
         if (RAWDATA) {
             printf("\rTrue starting fraction       =  %g\n",
                    (double) (lorec * ptsperrec) / s.N);
@@ -1294,7 +1300,10 @@ int main(int argc, char *argv[])
         /* sub-integrations in time  */
 
         dtmp = (double) cmd->npart;
-        for (ii = 0; ii < cmd->npart; ii++) {
+
+        if(!cmd->cudaP)
+        {
+            for (ii = 0; ii < cmd->npart; ii++) {
             parttimes[ii] = ii * reads_per_part * proftime;
 
             /* reads per sub-integration */
@@ -1361,43 +1370,110 @@ int main(int argc, char *argv[])
                 } else {
                     fold_time0 = parttimes[ii] + jj * proftime;
                 }
-
                 /* Fold the frequency sub-bands */
 
-#ifdef _OPENMP
-#pragma omp parallel for default(shared)
-#endif
-                for (kk = 0; kk < cmd->nsub; kk++) {
-                    /* This is a quick hack to see if it will remove power drifts */
-                    if (cmd->runavgP && (numread > 0)) {
-                        int dataptr;
-                        double avg, var;
-                        // avg_var(data + kk * worklen, numread, &avg, &var);
+                    #ifdef _OPENMP
+                    #pragma omp parallel for default(shared)
+                    #endif
+                    for (kk = 0; kk < cmd->nsub; kk++) {
+                        /* This is a quick hack to see if it will remove power drifts */
+                        if (cmd->runavgP && (numread > 0)) {
+                            int dataptr;
+                            double avg;
+                            // avg_var(data + kk * worklen, numread, &avg, &var);
 
-                        int meanbkjj;
-                        avg = 0;
-                        for(meanbkjj = 0; meanbkjj<numread; meanbkjj++)
-                        {
-                            avg += data[kk *worklen + meanbkjj];
+                            int meanbkjj;
+                            avg = 0;
+                            for(meanbkjj = 0; meanbkjj<numread; meanbkjj++)
+                            {
+                                avg += data[kk *worklen + meanbkjj];
+                            }
+                            avg /= numread;
+                            for (dataptr = 0; dataptr < worklen; dataptr++)
+                                data[kk * worklen + dataptr] -= avg;
                         }
-                        avg /= numread;
-                        for (dataptr = 0; dataptr < worklen; dataptr++)
-                            data[kk * worklen + dataptr] -= avg;
+                        fold(data + kk * worklen, numread, search.dt,
+                            fold_time0,
+                            search.rawfolds + (ii * cmd->nsub + kk) * search.proflen,
+                            search.proflen, cmd->phs, buffers + kk * search.proflen,
+                            phasesadded + kk, foldf, foldfd, foldfdd, flags, Ep, tp,
+                            numdelays, NULL, &(search.stats[ii * cmd->nsub + kk]),
+                            !cmd->samplesP);
                     }
-                    fold(data + kk * worklen, numread, search.dt,
-                         fold_time0,
-                         search.rawfolds + (ii * cmd->nsub + kk) * search.proflen,
-                         search.proflen, cmd->phs, buffers + kk * search.proflen,
-                         phasesadded + kk, foldf, foldfd, foldfdd, flags, Ep, tp,
-                         numdelays, NULL, &(search.stats[ii * cmd->nsub + kk]),
-                         !cmd->samplesP);
+                    totnumfolded += numread;
                 }
-                totnumfolded += numread;
+                printf("\r  Folded %lld points of %.0f", totnumfolded, N);
+                fflush(NULL);
             }
-
-            printf("\r  Folded %lld points of %.0f", totnumfolded, N);
-            fflush(NULL);
         }
+        else if(cmd->cudaP && RAWDATA)
+        {
+            float *data_gpu;
+            int *idispdt_gpu;
+            cudaMalloc((void**)&data_gpu, sizeof(float)*cmd->nsub * worklen);
+            cudaMalloc((void**)&idispdt_gpu, sizeof(int)*numchan);
+            cudaMemcpy(idispdt_gpu, idispdts, sizeof(int)*numchan, cudaMemcpyHostToDevice);
+
+            for (ii = 0; ii < cmd->npart; ii++) {
+                parttimes[ii] = ii * reads_per_part * proftime;
+                /* reads per sub-integration */
+                for (jj = 0; jj < reads_per_part; jj++) {
+                    double fold_time0;
+                    numread = read_subbands_GPU(data_gpu, idispdt_gpu, cmd->nsub, &s, 1, &padding, maskchans, &nummasked, &obsmask);
+                    if (cmd->polycofileP) { /* Update the period/phase */
+                        double mjdf, currentsec, currentday, offsetphase, orig_cmd_phs = 0.0;
+                        if (ii == 0 && jj == 0)
+                            orig_cmd_phs = cmd->phs;
+                        currentsec = parttimes[ii] + jj * proftime;
+                        currentday = currentsec / SECPERDAY;
+                        mjdf = idata.mjd_f + startTday + currentday;
+                        /* Calculate the pulse phase at the start of the current block */
+                        polyco_index =
+                            phcalc(idata.mjd_i, mjdf, polyco_index, &polyco_phase,
+                                &foldf);
+                        if (!cmd->absphaseP)
+                            polyco_phase -= polyco_phase0;
+                        if (polyco_phase < 0.0)
+                            polyco_phase += 1.0;
+                        /* Calculate the folding frequency at the middle of the current block */
+                        polyco_index =
+                            phcalc(idata.mjd_i, mjdf + 0.5 * proftime / SECPERDAY,
+                                polyco_index, &offsetphase, &foldf);
+                        cmd->phs = orig_cmd_phs + polyco_phase;
+                        fold_time0 = 0.0;
+                    } else {
+                        fold_time0 = parttimes[ii] + jj * proftime;
+                    }
+                    
+                    /* Fold the frequency sub-bands */
+                    for (kk = 0; kk < cmd->nsub; kk++) {
+                        /* This is a quick hack to see if it will remove power drifts */
+                        if (cmd->runavgP && (numread > 0)) {
+                            int dataptr;
+                            double avg = 0;
+                            avg = get_mean_gpu_d(data_gpu+kk*worklen, numread);
+                            sum_value_gpu(data_gpu+kk*worklen, avg,worklen);
+                        }
+                        cudaMemcpy(data+ kk*worklen, data_gpu + kk*worklen, sizeof(float)*worklen, cudaMemcpyDeviceToHost);
+
+                        fold(data + kk * worklen, numread, search.dt,
+                            fold_time0,
+                            search.rawfolds + (ii * cmd->nsub + kk) * search.proflen,
+                            search.proflen, cmd->phs, buffers + kk * search.proflen,
+                            phasesadded + kk, foldf, foldfd, foldfdd, flags, Ep, tp,
+                            numdelays, NULL, &(search.stats[ii * cmd->nsub + kk]),
+                            !cmd->samplesP);
+                    }
+                    totnumfolded += numread;
+                }
+
+                printf("\r  Folded %lld points of %.0f", totnumfolded, N);
+                fflush(NULL);
+            }
+            cudaFree(data_gpu);
+            cudaFree(idispdt_gpu);
+        }
+
         vect_free(buffers);
         vect_free(phasesadded);
     }
@@ -1840,7 +1916,12 @@ int main(int argc, char *argv[])
     if (cmd->nsub == 1 && !cmd->searchpddP)
         vect_free(ppdot);
     delete_prepfoldinfo(&search);
-    vect_free(data);
+
+    // if(!cmd->cudaP)
+        vect_free(data);
+    // else if(cmd->cudaP && RAWDATA)
+        // cudaFree(data);
+
     if (!cmd->outfileP)
         free(rootnm);
     free(outfilenm);

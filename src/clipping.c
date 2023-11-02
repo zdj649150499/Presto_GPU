@@ -46,7 +46,7 @@ int read_onoff_paris(FILE * onofffile, long long **onbins, long long **offbins)
 
 /* NEW Clipping Routine (uses channel running averages) */
 int clip_times(float *rawdata, int ptsperblk, int numchan, float clip_sigma,
-               float *good_chan_levels)
+               float *good_chan_levels, int thread)
 // Perform time-domain clipping of rawdata.  This is a 2D array with
 // ptsperblk*numchan points, each of which is a float.  The clipping
 // is done at clip_sigma sigma above/below the running mean.  The

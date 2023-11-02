@@ -180,7 +180,7 @@ void dedisp_subbands(float *data, float *lastdata,
     /* Initialize the result array */
     loffset = (long long)(numpts) * numsubbands;
     for (ii = 0; ii < loffset; ii++)
-        result[ii] = 0.0;
+        result[ii] = 0.0f;
 
     /* De-disperse into the subbands */
 /* #ifdef _OPENMP */
@@ -215,7 +215,6 @@ void float_dedisp(float *data, float *lastdata,
 // the channels stored together at each time point.
 {
     long long ii, jj, kk;
-
     for (ii = 0; ii < numpts; ii++)
         result[ii] = -approx_mean;
 
@@ -228,6 +227,16 @@ void float_dedisp(float *data, float *lastdata,
         for (; kk < numpts; kk++, jj += numchan)
             result[kk] += data[jj];
     }
+
+    /*time first*/
+    // for (ii = 0; ii < numchan; ii++) {
+    //     jj = ii*numpts + (long long)(delays[ii]);
+    //     for (kk = 0; kk < numpts - delays[ii]; kk++, jj++)
+    //         result[kk] += lastdata[jj];
+    //     jj = ii*numpts;
+    //     for (; kk < numpts; kk++, jj++)
+    //         result[kk] += data[jj];
+    // }
 }
 
 

@@ -6,6 +6,12 @@
 #include "backend_common.h"
 #include "rfifind.h"
 
+// #include <cuda_runtime.h>
+// #include <device_launch_parameters.h>
+// #include <cuda.h>
+
+#include "cuda.cuh"
+
 // Use OpenMP
 #ifdef _OPENMP
 #include <omp.h>
@@ -58,6 +64,10 @@ int main(int argc, char *argv[])
     float *chandatabk =  NULL;
     float inttime, norm = 0.0, fracterror = RFI_FRACTERROR;
     float *rawdata = NULL;
+    
+    float *rawdata_gpu;
+    short *srawdata_gpu;
+
     unsigned char **bytemask = NULL;
     short *srawdata = NULL;
     char *outfilenm, *statsfilenm, *maskfilenm;
@@ -132,9 +142,17 @@ int main(int argc, char *argv[])
     showOptionValues();
 #endif
 
+    if(cmd->cudaP == 1)
+    {
+      select_cuda_dev(cmd->cuda);
+    }
+
+
+
     printf("\n\n");
     printf("               Pulsar Data RFI Finder\n");
     printf("                 by Scott M. Ransom\n\n");
+    printf("            GPU version by Dejiang Zhou, NAOC\n\n");
 
     /* The following is the root of all the output files */
 
@@ -298,9 +316,18 @@ int main(int argc, char *argv[])
             rawdata = gen_fvect(idata.num_chan * ptsperblock * blocksperint);
         else if (insubs)
             srawdata = gen_svect(idata.num_chan * ptsperblock * blocksperint);
-        
-        chandatabk = gen_fvect(idata.num_chan * ptsperblock * blocksperint);
-        
+
+        if(cmd->cudaP)
+        {
+            if (RAWDATA)
+                cudaMalloc((void**)&rawdata_gpu, sizeof(float)*idata.num_chan * ptsperblock * blocksperint);
+            else if (insubs)
+                cudaMalloc((void**)&srawdata_gpu, sizeof(float)*idata.num_chan * ptsperblock * blocksperint);
+            cudaMalloc((void**)&chandatabk, sizeof(float)*idata.num_chan * ptsperblock * blocksperint);
+        }
+        else
+            chandatabk = gen_fvect(idata.num_chan * ptsperblock * blocksperint);
+
         dataavg = gen_fmatrix(numint, numchan);
         datastd = gen_fmatrix(numint, numchan);
         datapow = gen_fmatrix(numint, numchan);
@@ -339,7 +366,7 @@ int main(int argc, char *argv[])
                 // Clip nasty RFI if requested (we are not masking)
                 if (s.clip_sigma > 0.0)
                     clip_times(rawdata, ptsperint, s.num_channels, s.clip_sigma,
-                               s.padvals);
+                               s.padvals, cmd->ncpus);
             } else if (insubs) {
                 read_subband_rawblocks(s.files, s.num_files,
                                        srawdata, blocksperint, &padding);
@@ -350,10 +377,34 @@ int main(int argc, char *argv[])
                 for (jj = 0; jj < numchan; jj++)
                     bytemask[ii][jj] |= PADDING;
 
-            if (RAWDATA)
-                get_channelbk_avg_var(chandatabk, blocksperint, rawdata, &s, dataavg[ii], datastd[ii], 1);
-            else if (insubs)
-                get_subband_avg_var(chandatabk, blocksperint, srawdata, &s, dataavg[ii], datastd[ii]);
+
+            if(!cmd->cudaP)
+            {
+                if (RAWDATA)
+                {
+                    static fftwf_plan tplan1;
+                    tplan1 = plan_transpose( ptsperblock * blocksperint, idata.num_chan, rawdata, rawdata);
+                    fftwf_execute_r2r(tplan1, rawdata, rawdata);
+                    get_channelbk_avg_var(chandatabk, blocksperint, rawdata, &s, dataavg[ii], datastd[ii], 1, cmd->ncpus);
+                }
+                else if (insubs)
+                    get_subband_avg_var(chandatabk, blocksperint, srawdata, &s, dataavg[ii], datastd[ii]);
+            }
+            else
+            {
+                if (RAWDATA)
+                {
+                    cudaMemcpy(rawdata_gpu, rawdata, sizeof(float)*idata.num_chan * ptsperblock * blocksperint, cudaMemcpyHostToDevice);
+                    get_channelbk_avg_var_gpu(chandatabk, blocksperint, rawdata_gpu, &s, dataavg[ii], datastd[ii], 1);
+                }
+                else if (insubs)
+                {
+                    cudaMemcpy(srawdata_gpu, srawdata, sizeof(float)*idata.num_chan * ptsperblock * blocksperint, cudaMemcpyHostToDevice);
+                    get_subband_avg_var(chandatabk, blocksperint, srawdata_gpu, &s, dataavg[ii], datastd[ii]);
+                }
+
+            }
+
 
             for (jj = 0; jj < numchan; jj++) {  /* Loop over the channels */
 
@@ -380,7 +431,10 @@ int main(int argc, char *argv[])
                     // Don't search the power spectrum if there is little to no variance
                     // if (datastd[ii][jj] > 1e-4 && !cmd->norficandP) 
                     if (datastd[ii][jj] > 1e-4 && ii == 0) {
-                        memcpy(chandata, chandatabk+jj*ptsperint, sizeof(float)*ptsperint);
+                        if(!cmd->cudaP)
+                            memcpy(chandata, chandatabk+jj*ptsperint, sizeof(float)*ptsperint);
+                        else
+                            cudaMemcpy(chandata, chandatabk+jj*ptsperint, sizeof(float)*ptsperint, cudaMemcpyDeviceToHost);
                         realfft(chandata, ptsperint, -1);
                         norm = datastd[ii][jj] * datastd[ii][jj] * ptsperint;
                         cands = search_fft((fcomplex *) chandata, ptsperint / 2,
@@ -422,6 +476,7 @@ int main(int argc, char *argv[])
                         }
                         free(cands);
                     }
+                    numcands=0;
                 }
             }
         }
@@ -590,11 +645,27 @@ int main(int argc, char *argv[])
         //  Close all the raw files and free their vectors
         close_rawfiles(&s);
         vect_free(chandata);
-        vect_free(chandatabk);
+        
         if (insubs)
             vect_free(srawdata);
         else
             vect_free(rawdata);
+        
+        if(cmd->cudaP)
+        {
+            if (insubs)
+                cudaFree(srawdata_gpu);
+            else
+                cudaFree(rawdata_gpu);
+            cudaFree(chandatabk);
+        }
+        else
+            vect_free(chandatabk);
+    }
+
+    if(cmd->cudaP == 1)
+    {
+        Endup_GPU();
     }
     return (0);
 }

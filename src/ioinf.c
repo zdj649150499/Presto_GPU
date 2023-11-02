@@ -308,8 +308,10 @@ void writeinf(infodata * data)
         fprintf(infofile,
                 " Type of observation (EM band)          =  %s\n", data->band);
         if (strcmp(data->band, bands[0]) == 0) {
+            // fprintf(infofile,
+                    // " Beam diameter (arcsec)                 =  %.0f\n", data->fov);
             fprintf(infofile,
-                    " Beam diameter (arcsec)                 =  %.0f\n", data->fov);
+                    " Beam diameter (arcsec)                 =  %.0f\n", 0.0);
             fprintf(infofile,
                     " Dispersion measure (cm-3 pc)           =  %.12g\n", data->dm);
             fprintf(infofile,
