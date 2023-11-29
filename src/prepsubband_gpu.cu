@@ -1,25 +1,30 @@
 #include <cuda_runtime.h>
 #include <cufft.h>
-//#include <helper_functions.h>
-// #include <helper_cuda.h>
+
 #include <stdio.h>
-#include "device_functions.h" 
 
 extern "C" void select_cuda_dev(int cuda_inds);
 extern "C" void Endup_GPU();
 
-extern "C" void DedispersionOnGPU(float *oridata_gpu, float *outdata_gpu,  int worklen, int bs, int nsub, int numdms, int *offsets);
-__global__ void getTimeDMArrayGPUonceGPU(float *oridata_gpu, float *outdata_gpu,  int worklen, int bs, int nsub, int numdms, int *offsets);
-__global__ void DownsampDataArrayGPU(float *oridata, float *outdata, int nsub, int worklen, int bs);
 
-extern "C" void dedisp_subbandsGPU(float *data, float *lastdata, int numpts, int numchan, int *delays, int numsubbands, float *result);
+extern "C" void dedisp_subbands_GPU(float *data, float *lastdata,
+                     int numpts, int numchan, 
+                     int *delays, int numsubbands, float *result, int transpose);
 
-__global__ void dedisp_subbandsGPU_GPU(float *data, float *lastdata, int numpts, int numchan, int *delays, int numsubbands, int chan_per_subband, float *result);
+__global__ void Do_dedisp_subbands_GPU(float *data, float *lastdata,
+                     int numpts, int numchan, 
+                     int *delays, int numsubbands, float *result, int transpose);
+extern "C" void downsamp_GPU(float *indata, float *outdata, int numchan, int numpts, int down);
+__global__ void Do_downsamp_GPU(float *indata, float *outdata, int numchan, int numpts, int down);
+extern "C" void float_dedisp_GPU(float *data, float *lastdata,
+                  int numpts, int numchan,
+                  int *delays, float approx_mean, float *result, int numdms);
+__global__ void Do_float_dedisp_GPU(float *data, float *lastdata,
+                  int numpts, int numchan,
+                  int *delays, float approx_mean, float *result, int numdms);
 
-
-
-texture<float> texRef1;
-texture<float> texRef2;
+extern "C" void Get_subsdata(float *indata, short *outdata, int nsub, int worklen);
+__global__ void Do_Get_subsdata(float *indata, short *outdata, int nsub, int worklen);
 
 //----------------------select a cpu to play with --------------------
 void select_cuda_dev(int cuda_inds)
@@ -42,185 +47,198 @@ void Endup_GPU()
 }
 
 
-// void DedispersionOnGPU(float *oridata_gpu, float *outdata_gpu,  int worklen, int bs, int nsub, int numdms, int *offsets)
-// {
-//     int BlkPerRow=(worklen-1+512)/512;
-//     dim3 dimGrid2D(BlkPerRow,numdms);
-//     getTimeDMArrayGPUonceGPU<<<dimGrid2D,512>>>(oridata_gpu, outdata_gpu, worklen, bs, nsub, numdms, offsets);
-// }
-
-// __global__ void getTimeDMArrayGPUonceGPU(float *oridata_gpu, float *outdata_gpu,  int worklen, int bs, int nsub, int numdms, int *offsets)
-// {
-//     int i,j,c,b;
-//     int MYrow=blockIdx.y;
-//     int ThrPerBlk = blockDim.x;
-// 	int MYbid = blockIdx.x;
-// 	int MYtid = threadIdx.x;
-//     int MYgtid = ThrPerBlk * MYbid + MYtid;
-//     if(MYgtid>=worklen) return;
-
-//     // c=MYgtid*numdms+MYrow;   // col first
-//     c=MYrow*worklen+MYgtid;     // row first
-//     float val=0;
-//     for(i=0;i<nsub;i++)
-//     {
-//         b=MYgtid+offsets[MYrow*nsub+i];
-//         for(j=0;j<bs;j++)
-//         {
-//             b=i+(b*bs+j)*nsub;
-//         }
-//         val+=(oridata_gpu[b]);
-//     }
-//     outdata_gpu[c]=val;
-// }
-
-/* same as above*/
-
-void DedispersionOnGPU(float *oridata_gpu, float *outdata_gpu,  int worklen, int bs, int nsub, int numdms, int *offsets)
+void dedisp_subbands_GPU(float *data, float *lastdata,
+                     int numpts, int numchan, 
+                     int *delays, int numsubbands, float *result, int transpose)
 {
-    int BlkPerRow;
+    float *data_gpu, *lastdata_gpu;
 
-    if(bs>1)
-    {
-        float *arraybk;
-        int custatus = cudaMalloc((void**)&arraybk, sizeof(float)*nsub*worklen*2);
+    cudaMalloc((void**)&data_gpu, sizeof(float)*numpts * numchan);
+    cudaMalloc((void**)&lastdata_gpu, sizeof(float)*numpts * numchan);
 
-        BlkPerRow=(worklen*nsub*2-1+1024)/1024;
-        DownsampDataArrayGPU<<<BlkPerRow,1024>>>(oridata_gpu,arraybk, nsub,worklen*2,bs);
+    cudaMemcpy(data_gpu, data, sizeof(float)*numpts * numchan, cudaMemcpyHostToDevice);
+    cudaMemcpy(lastdata_gpu, lastdata, sizeof(float)*numpts * numchan, cudaMemcpyHostToDevice);
+    
 
-        BlkPerRow=(worklen*numdms-1+1024)/1024;
-        getTimeDMArrayGPUonceGPU<<<BlkPerRow,1024>>>(arraybk, outdata_gpu, worklen, 1, nsub, numdms, offsets);
-
-        cudaFree(arraybk);
-    }
-    else
-    {
-        BlkPerRow=(worklen*numdms-1+1024)/1024;
-        getTimeDMArrayGPUonceGPU<<<BlkPerRow,1024>>>(oridata_gpu, outdata_gpu, worklen, 1, nsub, numdms, offsets);
-    }
-}
-
-__global__ void DownsampDataArrayGPU(float *oridata, float *outdata, int nsub, int worklen, int bs)
-{
-    int ThrPerBlk = blockDim.x;
-	int MYbid = blockIdx.x;
-	int MYtid = threadIdx.x;
-    int MYgtid = ThrPerBlk * MYbid + MYtid;
-    if(MYgtid>=worklen*nsub) return;
-
-    int j;
-    float val=0;
-    int mychan = (int )(MYgtid/worklen);
-    int mybin = MYgtid - mychan*worklen;
-
-    int index = mychan + mybin*bs*nsub;
-    for(j=0;j<bs;j++)
-    {
-        val += (oridata[index]);
-        index += nsub;
-    }
-    outdata[mychan+mybin*nsub]=val/bs;
-}
-
-
-__global__ void getTimeDMArrayGPUonceGPU(float *oridata_gpu, float *outdata_gpu,  int worklen, int bs, int nsub, int numdms, int *offsets)
-{
-    int i,j,b;
-    int ThrPerBlk = blockDim.x;
-	int MYbid = blockIdx.x;
-	int MYtid = threadIdx.x;
-    int MYgtid = ThrPerBlk * MYbid + MYtid;
-    if(MYgtid>=worklen*numdms) return;
-
-    float val=0;
-    int dmi= (int)(MYgtid/worklen);
-    int xi= MYgtid - dmi*worklen;
-    for(i=0;i<nsub;i++)
-    {
-        b=xi*bs+offsets[dmi*nsub+i]*bs;
-        b=i+b*nsub;
-        for(j=0;j<bs;j++)
-        {
-            val+=(oridata_gpu[b]);
-            b+=nsub;
-        }
-    }
-    outdata_gpu[MYgtid]=val/bs;
-}
-
-
-void dedisp_subbandsGPU(float *data, float *lastdata, int numpts, int numchan, int *delays, int numsubbands, float *result)
-
-{
-    float *data_gpu;
-    float *lastdata_gpu;
-    float *result_gpu;
-    int *delays_gpu;
-    int chan_per_subband = numchan / numsubbands;
-
-    cudaMalloc((void**)&data_gpu, sizeof(float)*numpts*numchan);
-    cudaMalloc((void**)&lastdata_gpu, sizeof(float)*numpts*numchan);
-    cudaMalloc((void**)&result_gpu, sizeof(float)*numpts*numsubbands);
-    cudaMalloc((void**)&delays_gpu, sizeof(int)*numchan);
-
-    cudaMemcpy(data_gpu, lastdata, sizeof(float)*numpts*numchan, cudaMemcpyHostToDevice);
-    cudaMemcpy(data_gpu+numpts*numchan, data, sizeof(float)*numpts*numchan, cudaMemcpyHostToDevice);
-    cudaMemcpy(delays_gpu, delays, sizeof(int)*numchan, cudaMemcpyHostToDevice);
-
-    int BlkPerRow=(numpts*numsubbands-1+1024)/1024;
-    dedisp_subbandsGPU_GPU<<<BlkPerRow,512>>>(data_gpu, lastdata_gpu, numpts,  numchan,  delays_gpu,  numsubbands, chan_per_subband, result_gpu);
-
-    cudaMemcpy(result, result_gpu, sizeof(float)*numpts*numsubbands, cudaMemcpyDeviceToHost);
-
+    int BlkPerRow=(numpts-1+512)/512;
+    dim3 dimGrid2D(BlkPerRow,numsubbands);
+    Do_dedisp_subbands_GPU<<<dimGrid2D,512>>>(data_gpu, lastdata_gpu, numpts, numchan, delays, numsubbands, result, transpose);
+    int cudaStatus = cudaDeviceSynchronize();
     cudaFree(data_gpu);
     cudaFree(lastdata_gpu);
-    cudaFree(result_gpu);
-    cudaFree(delays_gpu);
 }
 
-
-__global__ void dedisp_subbandsGPU_GPU(float *data, float *lastdata, int numpts, int numchan, int *delays, int numsubbands, int chan_per_subband, float *result)
+__global__ void Do_dedisp_subbands_GPU(float *data, float *lastdata,
+                     int numpts, int numchan, 
+                     int *delays, int numsubbands, float *result, int transpose)
 {
     int i;
-    int ThrPerBlk = blockDim.x;
-	int MYbid = blockIdx.x;
-	int MYtid = threadIdx.x;
-    int MYgtid = ThrPerBlk * MYbid + MYtid;
-    if(MYgtid>=numpts*numsubbands) return;
+    const int MYrow=blockIdx.y;
+    const int MYgtid = blockDim.x * blockIdx.x + threadIdx.x;
+    if(MYgtid>=numpts) return;
 
-    int yi= (int)(MYgtid/numpts);
-    int xi= MYgtid - yi*numpts;
-    int oir_yi;
-    int ori_xi;
-    float val=0.0;
-    for(i=0; i<chan_per_subband; i++)
+    float temp = 0.0f;
+    int chan_per_subband = numchan / numsubbands;
+    int  in_index, out_index;
+    if(transpose)
+        out_index = MYrow*numpts + MYgtid;      // transpose=1 for time first
+    else
+        out_index = MYrow + MYgtid*numsubbands;  // transpose=0 for freq first
+    int blk = numpts*numchan;
+    for(i=0;i<chan_per_subband; i++)
     {
-        oir_yi = i + yi*chan_per_subband;
-        ori_xi = xi + delays[oir_yi];
-        if(ori_xi < numpts)
-            val += lastdata[ori_xi + oir_yi*numpts];
-        else val += data[ori_xi - numpts + oir_yi*numpts];
-    }
-    result[MYgtid] = val;
-}
-// {
-//     int i;
-//     int ThrPerBlk = blockDim.x;
-//     int MYbid = blockIdx.x;
-//     int MYtid = threadIdx.x;
-//     int MYgtid = ThrPerBlk * MYbid + MYtid;
-//     if(MYgtid>=numpts*numsubbands) return;
+        int  in_chan = i + MYrow*chan_per_subband;
+        int  dind = delays[in_chan];
+        in_index = (dind+MYgtid)*numchan + in_chan;
+        if(MYgtid < numpts-dind)
+        {
+            temp += lastdata[in_index];
+        }
+        else
+        {
+            in_index -= blk;
+            temp += data[in_index];
+        }
 
-//     int yi= (int)(MYgtid/numpts);
-//     int xi= MYgtid - yi*numpts;
-//     int oir_yi;
-//     int ori_xi;
-//     float val=0.0;
-//     for(i=0; i<chan_per_subband; i++)
-//     {
-//         oir_yi = i + yi*chan_per_subband;
-//         ori_xi = xi + delays[oir_yi];
-//         val += data[ori_xi*numchan +oir_yi];
-//     }
-//     result[MYgtid] = val;
-// }
+        // if(MYgtid < numpts-dind)
+        // {
+        //     in_index = (MYgtid+dind)*numchan+in_chan;
+        //     temp += lastdata[in_index];
+        // }
+        // else
+        // {
+        //     in_index = (MYgtid+dind -numpts)*numchan+in_chan;
+        //     temp += data[in_index];
+        // }
+    }
+    result[out_index] = temp;
+}
+
+void downsamp_GPU(float *indata, float *outdata, int numchan, int numpts, int down)
+{
+    int BlkPerRow=(numpts-1+512)/512;
+    dim3 dimGrid2D(BlkPerRow,numchan);
+    Do_downsamp_GPU<<<dimGrid2D, 512>>>(indata, outdata, numchan, numpts, down);
+    int cudaStatus = cudaDeviceSynchronize();
+}
+
+__global__ void Do_downsamp_GPU(float *indata, float *outdata, int numchan, int numpts, int down)
+{
+    int i;
+    const int MYrow=blockIdx.y;
+    const int MYgtid = blockDim.x * blockIdx.x + threadIdx.x;
+    if(MYgtid>=numpts) return;
+
+    float ftmp = 0.0f;
+    const int out_index = MYrow + MYgtid*numchan;
+    int  in_dex;
+
+    /* input freq first */
+    
+    in_dex = MYgtid*numchan*down + MYrow;
+    for(i=0;i<down;i++)
+    {
+        ftmp+=indata[in_dex];
+        in_dex+=numchan;
+    }
+    outdata[out_index] = ftmp /(1.0f*down);
+
+    /* input time first */
+    // out_index = MYrow*numpts + MYgtid;
+    // in_dex = out_index*down;
+    // for(i=0;i<down;i++)
+    // {
+    //     ftmp+=indata[in_dex];
+    //     in_dex+=1;
+    // }
+    // outdata[out_index] = ftmp/(1.0f*down);
+}
+
+void float_dedisp_GPU(float *data, float *lastdata,
+                  int numpts, int numchan,
+                  int *delays, float approx_mean, float *result, int numdms)
+{
+
+    int BlkPerRow=(numpts-1+512)/512;
+    dim3 dimGrid2D(BlkPerRow,numdms);
+    Do_float_dedisp_GPU<<< dimGrid2D,512 >>>(data, lastdata, numpts, numchan,
+                  delays, approx_mean, result, numdms);
+    int cudaStatus = cudaDeviceSynchronize();
+}
+
+
+__global__ void Do_float_dedisp_GPU(float *data, float *lastdata,
+                  int numpts, int numchan,
+                  int *delays, float approx_mean, float *result, int numdms)
+{
+    int i;
+    const int MYrow=blockIdx.y;
+    const int  MYgtid = blockDim.x * blockIdx.x + threadIdx.x;
+    if(MYgtid>=numpts) return;
+
+    
+    int in_dex;
+    const int out_index = MYrow*numpts + MYgtid;
+    const int  x=MYrow*numchan;
+
+    float ftmp = -approx_mean;
+
+    // extern __shared__ int delays_share[];
+    // int *delays_share_bk = (int *)delays_share;
+
+
+
+    for(i=0;i<numchan;i++)
+    {
+        // delays_share_bk[i] = delays[x+i];
+        // __syncthreads();
+        /****/
+        /* input freq first */
+        // in_dex = MYgtid+(long long)(delays_share_bk[i]);
+        in_dex = MYgtid+(long long)(delays[x+i]);
+        if(in_dex<numpts)
+        {
+            in_dex=i+in_dex*numchan;
+            ftmp += lastdata[in_dex];
+        }
+        else
+        {
+            in_dex -=numpts;
+            in_dex=i+in_dex*numchan;
+            ftmp += data[in_dex];
+        }
+
+        /* input time first */
+        // in_dex = delays[x+i];
+        // if(MYgtid<(numpts-in_dex))
+        // {
+        //     in_dex=i*numpts+in_dex+MYgtid;
+        //     ftmp += lastdata[in_dex];
+        // }
+        // else
+        // {
+        //     in_dex=i*numpts+(MYgtid-numpts+in_dex);
+        //     ftmp += data[in_dex];
+        // }
+    }
+    result[out_index] = ftmp;
+}
+
+
+void Get_subsdata(float *indata, short *outdata, int nsub, int worklen)
+{
+    int BlkPerRow=(nsub*worklen-1+512)/512;
+    Do_Get_subsdata<<< BlkPerRow,512 >>>(indata, outdata, nsub, worklen);
+    int cudaStatus = cudaDeviceSynchronize();
+}
+
+__global__ void Do_Get_subsdata(float *indata, short *outdata, int nsub, int worklen)
+{
+    const int  MYgtid = blockDim.x * blockIdx.x + threadIdx.x;
+    if(MYgtid>=worklen) return;
+
+    int x,y;
+    x = MYgtid%worklen;
+    y = MYgtid/worklen;
+    outdata[MYgtid] = (short)(indata[x*nsub+y]+0.5);
+}

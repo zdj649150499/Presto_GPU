@@ -37,7 +37,7 @@ CUDA_PATH       ?= /usr/local/cuda
 CUDA_INC_PATH   ?= -I $(CUDA_PATH)/include -I. -I.. -I $(CUDA_PATH)/samples/common/inc/ -I$(PRESTO)/include
 
 CUDA_BIN_PATH   ?= $(CUDA_PATH)/bin
-NVCC            ?= $(CUDA_BIN_PATH)/nvcc
+NVCC            ?= $(CUDA_BIN_PATH)/nvcc -O3 -use_fast_math -std=c++11  
 
 #modify it if necessary, for example, if 32-bit machine, -m32
 NVCCFLAGS 			?= -m64 -ccbin g++
@@ -168,7 +168,7 @@ PRESTOOBJS = amoeba.o atwood.o barycenter.o birdzap.o cand_output.o\
 	rzinterp.o rzwinterp.o select.o sorter.o swapendian.o\
 	transpose.o twopass.o twopass_real_fwd.o\
 	twopass_real_inv.o vectors.o mask.o\
-	fitsfile.o hget.o hput.o imio.o djcl.o range_parse.o prepsubband_gpu.o
+	fitsfile.o hget.o hput.o imio.o djcl.o range_parse.o cuda.o  
 
 INSTRUMENTOBJS = backend_common.o zerodm.o sigproc_fb.o psrfits.o
 
@@ -227,7 +227,7 @@ binaries: $(BINARIES)
 
 mpi: mpiprepsubband
 
-prepsubband_gpu.o:  prepsubband_gpu.cu
+cuda.o : cuda.cu
 	$(NVCC) $(EXTRA_NVCCFLAGS) $(NVCCFLAGS) $(CUDA_INC_PATH)  $(GENCODE_FLAGS) -o $@ -c $<
 
 mpiprepsubband_utils.o: mpiprepsubband_utils.c
@@ -239,8 +239,8 @@ mpiprepsubband.o: mpiprepsubband.c
 mpiprepsubband: mpiprepsubband_cmd.c mpiprepsubband_cmd.o mpiprepsubband_utils.o mpiprepsubband.o $(INSTRUMENTOBJS) libpresto
 	mpicc $(CLINKFLAGS) -o $(PRESTO)/bin/$@ mpiprepsubband_cmd.o mpiprepsubband_utils.o mpiprepsubband.o $(INSTRUMENTOBJS) $(PRESTOLINK) -lcfitsio -lm
 
-accelsearch: accelsearch_cmd.c accelsearch_cmd.o accel_utils.o accelsearch.o zapping.o libpresto
-	$(CC) $(CLINKFLAGS) $(OMPFLAGS) -o $(PRESTO)/bin/$@ accelsearch_cmd.o accel_utils.o accelsearch.o zapping.o $(PRESTOLINK) $(GLIBLINK) -lm
+accelsearch: accelsearch_cmd.c accelsearch_cmd.o accel_utils.o accelsearch.o zapping.o cuda.o libpresto
+	$(CC) $(CLINKFLAGS) $(OMPFLAGS) -o $(PRESTO)/bin/$@ accelsearch_cmd.o accel_utils.o accelsearch.o zapping.o cuda.o $(PRESTOLINK) $(GLIBLINK) -lm $(CUDA_LINK_EXTRA_FLAGS)
 
 bary: bary.o libpresto
 	$(CC) $(CLINKFLAGS) -o $(PRESTO)/bin/$@ bary.o $(PRESTOLINK) -lm
@@ -272,17 +272,17 @@ downsample: downsample_cmd.c downsample.o downsample_cmd.o libpresto
 split_parkes_beams: split_parkes_beams.o
 	$(CC) $(CLINKFLAGS) -o $(PRESTO)/bin/$@ split_parkes_beams.o
 
-rfifind: rfifind_cmd.c rfifind_cmd.o rfifind.o rfi_utils.o rfifind_plot.o $(INSTRUMENTOBJS) $(PLOT2DOBJS) libpresto
-	$(FC) $(FLINKFLAGS) -o $(PRESTO)/bin/$@  $(INSTRUMENTOBJS) $(PLOT2DOBJS) rfifind.o rfi_utils.o rfifind_cmd.o rfifind_plot.o $(PRESTOLINK) $(PGPLOTLINK) -lcfitsio -lm
+rfifind: rfifind_cmd.c rfifind_cmd.o rfifind.o rfi_utils.o rfifind_plot.o cuda.o $(INSTRUMENTOBJS) $(PLOT2DOBJS)  libpresto
+	$(FC) $(FLINKFLAGS) -o $(PRESTO)/bin/$@  $(INSTRUMENTOBJS) $(PLOT2DOBJS) rfifind.o rfi_utils.o rfifind_cmd.o rfifind_plot.o cuda.o $(PRESTOLINK) $(PGPLOTLINK) -lcfitsio -lm $(CUDA_LINK_EXTRA_FLAGS) 
 
 prepdata: prepdata_cmd.c prepdata_cmd.o prepdata.o $(INSTRUMENTOBJS) libpresto
 	$(CC) $(CLINKFLAGS) -o $(PRESTO)/bin/$@ prepdata.o prepdata_cmd.o $(INSTRUMENTOBJS) $(PRESTOLINK) -lcfitsio -lm
 
-prepsubband: prepsubband_cmd.c prepsubband_cmd.o prepsubband.o prepsubband_gpu.o $(INSTRUMENTOBJS) libpresto
-	$(CC) $(CLINKFLAGS) -o $(PRESTO)/bin/$@ prepsubband.o prepsubband_cmd.o prepsubband_gpu.o $(INSTRUMENTOBJS) $(PRESTOLINK) -lcfitsio -lm -lglib-2.0 $(CUDA_LINK_EXTRA_FLAGS)
+prepsubband: prepsubband_cmd.c prepsubband_cmd.o prepsubband.o  cuda.o $(INSTRUMENTOBJS) libpresto
+	$(CC) $(CLINKFLAGS) -o $(PRESTO)/bin/$@ prepsubband.o prepsubband_cmd.o cuda.o $(INSTRUMENTOBJS) $(PRESTOLINK) -lcfitsio -lm -lglib-2.0 $(CUDA_LINK_EXTRA_FLAGS) $(CUDA_LINK_EXTRA_FLAGS)
 
-prepfold: prepfold_cmd.c prepfold_cmd.o prepfold.o prepfold_utils.o prepfold_plot.o least_squares.o polycos.o readpar.o prepsubband_gpu.o $(INSTRUMENTOBJS) $(PLOT2DOBJS) libpresto
-	$(FC) $(FLINKFLAGS) -o $(PRESTO)/bin/$@ prepfold.o prepfold_utils.o prepfold_plot.o prepfold_cmd.o least_squares.o polycos.o readpar.o prepsubband_gpu.o $(PLOT2DOBJS) $(INSTRUMENTOBJS) $(LAPACKLINK) $(PRESTOLINK) $(PGPLOTLINK) -lcfitsio -lm -lglib-2.0 $(CUDA_LINK_EXTRA_FLAGS)
+prepfold: prepfold_cmd.c prepfold_cmd.o prepfold.o prepfold_utils.o prepfold_plot.o least_squares.o polycos.o readpar.o cuda.o $(INSTRUMENTOBJS) $(PLOT2DOBJS) libpresto
+	$(FC) $(FLINKFLAGS) -o $(PRESTO)/bin/$@ prepfold.o prepfold_utils.o prepfold_plot.o prepfold_cmd.o least_squares.o polycos.o readpar.o cuda.o $(PLOT2DOBJS) $(INSTRUMENTOBJS) $(LAPACKLINK) $(PRESTOLINK) $(PGPLOTLINK) -lcfitsio -lm -lglib-2.0 $(CUDA_LINK_EXTRA_FLAGS) 
 
 dump_spigot_zerolag: dump_spigot_zerolag.o spigot.o libpresto
 	$(CC) $(CLINKFLAGS) -o $(PRESTO)/bin/$@ dump_spigot_zerolag.o spigot.o $(PRESTOLINK) -lm
