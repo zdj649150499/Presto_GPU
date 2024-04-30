@@ -54,6 +54,8 @@ int read_subband_rawblocks(FILE * infiles[], int numfiles, short *subbanddata,
 void get_subband(int subbandnum, float chandat[], short srawdata[], int numsamples);
 extern int *ranges_to_ivect(char *str, int minval, int maxval, int *numvals);
 
+extern fftwf_plan plan_transpose(int rows, int cols, float *in, float *out);
+
 /* The main program */
 
 int main(int argc, char *argv[])
