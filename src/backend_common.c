@@ -12,7 +12,6 @@
 #include "cuda.cuh"
 
 
-
 static long long currentspectra = 0;
 static int using_MPI = 0;
 
@@ -22,10 +21,10 @@ extern int clip_times(float *rawdata, int ptsperblk, int numchan,
                       float clip_sigma, float *good_chan_levels, int thread);
 extern void float_dedisp(float *data, float *lastdata,
                          int numpts, int numchan,
-                         int *delays, float approx_mean, float *result);
+                         int *delays, float approx_mean, float *result, int transpose);
 extern void dedisp_subbands(float *data, float *lastdata,
                             int numpts, int numchan,
-                            int *delays, int numsubbands, float *result);
+                            int *delays, int numsubbands, float *result, int blockN, int thisblock);
 
 extern short transpose_float(float *a, int nx, int ny, unsigned char *move,
                              int move_size);
@@ -34,6 +33,8 @@ extern void read_filterbank_files(struct spectra_info *s);
 extern void read_PSRFITS_files(struct spectra_info *s);
 extern fftwf_plan plan_transpose(int rows, int cols, float *in, float *out);
 extern int *ranges_to_ivect(char *str, int minval, int maxval, int *numvals);
+
+
 
 void psrdatatype_description(char *outstr, psrdatatype ptype)
 {
@@ -663,7 +664,7 @@ int read_psrdata(float *fdata, int numspect, struct spectra_info *s,
 
             if (!firsttime)
                 float_dedisp(currentdata, lastdata, numspect, s->num_channels,
-                             delays, 0.0, fdata);
+                             delays, 0.0, fdata, 0);
 
             SWAP(currentdata, lastdata);
             if (firsttime)
@@ -715,14 +716,25 @@ void get_channel(float chandat[], int channum, int numsubints, float rawdata[],
         chandat[ii] = rawdata[jj];
 }
 
+void revertdata(float *chandat, int x, int y, float *rawdata)
+{
+    int ii, jj;
+
+    for(ii=0; ii<y; ii++)
+    {
+        for(jj=0; jj<x; jj++)
+        {
+            chandat[jj + ii*x] = rawdata[jj*y + ii];
+        }
+    }
+}
+
 void get_channelbk_avg_var(float *chandat, int numsubints, float *rawdata,
                  struct spectra_info *s, float *mean, float *var, int transpose, int thread)
 {
     // int nbin = s->spectra_per_subint;
     int nchan = s->num_channels;
-    int ii, jj, numspec = numsubints * s->spectra_per_subint;
-    double an = 0.0, an1 = 0.0, dx;
-    double meanbk, varbk;
+    int ii, numspec = numsubints * s->spectra_per_subint;
     
     if (numspec < 1) {
         printf("\vVector length must be > 0 in avg_var().  Exiting\n");
@@ -730,29 +742,34 @@ void get_channelbk_avg_var(float *chandat, int numsubints, float *rawdata,
     } 
 
 #ifdef _OPENMP
-#pragma omp parallel for num_threads(thread)
+// #pragma omp parallel for num_threads(thread)
+#pragma omp parallel for num_threads(thread) shared(mean, var, chandat) // private(an, an1, dx)
 #endif
     for(ii=0; ii<nchan; ii++)
     {
+        int jj;
+        double an, an1, dx;
+        double meanbk, varbk;
+
         an = 0.0;
-        // double bk=(double) rawdata[ii];
-        double bk=(double) rawdata[ii*numspec];
+        float bk= rawdata[ii*numspec];
+        // float bk= rawdata[ii];
         
-        // mean[ii] = bk;
-        // var[ii] = 0.0;
         meanbk = bk;
         varbk = 0.0;
         chandat[ii*numspec] = bk;
 
+        an = 1.0;
+        an1 = 0.0; 
         for(jj=1; jj<numspec; jj++)
         {
-            an = (double) (jj + 1);
-            an1 = (double) (jj);
-            // dx = (rawdata[ii+jj*nchan] - meanbk) / an;
-            // chandat[jj+ii*numspec] = rawdata[ii+jj*nchan];
+            an += 1.0;
+            an1 += 1.0;
 
-            dx = (rawdata[jj + ii*numspec] - meanbk) / an;
-            chandat[jj+ii*numspec] = rawdata[jj + ii*numspec];
+            bk = rawdata[jj + ii*numspec];
+            // bk = rawdata[jj*nchan + ii];
+            dx = (bk - meanbk) / an;
+            chandat[jj+ii*numspec] = bk;
 
             varbk += an * an1 * dx * dx;
             meanbk += dx;
@@ -836,21 +853,21 @@ void get_subband_avg_var(float *chandat, int numsubints, short *rawdata,
 }
 
 void get_subband_avg_var_gpu(float *chandat, int numsubints, short *rawdata,
-                 struct spectra_info *s, float *mean, float *var)
+                 struct spectra_info *s, float *mean, float *var, int transpose)
 {
     int nchan = s->num_channels;
     int ii, numspec = numsubints;
     float meanbk;
     double varbk;
-    float *data;
+    void *data;
 
-    // if(transpose)
+    if(transpose)
+        data = rawdata;
+    else
     {
         transpose_GPU_short(rawdata, chandat, numspec, nchan);
         data = chandat;
     }
-    // else
-    //     data = rawdata;
 
     for(ii=0; ii<nchan; ii++)
     {
@@ -871,7 +888,7 @@ void get_subband_avg_var_gpu(float *chandat, int numsubints, short *rawdata,
 
 int prep_subbands(float *fdata, float *rawdata, int *delays, int numsubbands,
                   struct spectra_info *s, int transpose,
-                  int *maskchans, int *nummasked, mask * obsmask)
+                  int *maskchans, int *nummasked, mask * obsmask, int blockN, int thisblock)
 // This routine preps a block of raw spectra for subbanding.  It uses
 // dispersion delays in 'delays' to de-disperse the data into
 // 'numsubbands' subbands.  It stores the resulting data in vector
@@ -918,30 +935,57 @@ int prep_subbands(float *fdata, float *rawdata, int *delays, int numsubbands,
         clip_times(currentdata, s->spectra_per_subint, s->num_channels,
                    s->clip_sigma, s->padvals, 1);
 
+
     if (mask) {
         if (*nummasked == -1) { /* If all channels are masked */
             for (ii = 0; ii < s->spectra_per_subint; ii++)
                 memcpy(currentdata + ii * s->num_channels,
                        s->padvals, s->num_channels * sizeof(float));
+            // Now transpose the raw block of data so that the times in each
+            // channel are the most rapidly varying index
+            fftwf_execute_r2r(tplan1, currentdata, currentdata);
         } else if (*nummasked > 0) {    /* Only some of the channels are masked */
+            // int channum;
+            // for (ii = 0; ii < s->spectra_per_subint; ii++) {
+            //     offset = ii * s->num_channels;
+            //     for (jj = 0; jj < *nummasked; jj++) {
+            //         channum = maskchans[jj];
+            //         currentdata[offset + channum] = s->padvals[channum];
+            //     }
+            // }
+
+            // Now transpose the raw block of data so that the times in each
+            // channel are the most rapidly varying index
+            fftwf_execute_r2r(tplan1, currentdata, currentdata);
             int channum;
-            for (ii = 0; ii < s->spectra_per_subint; ii++) {
-                offset = ii * s->num_channels;
-                for (jj = 0; jj < *nummasked; jj++) {
-                    channum = maskchans[jj];
-                    currentdata[offset + channum] = s->padvals[channum];
+            float padvals_tmp;
+            for (jj = 0; jj < *nummasked; jj++) {
+                channum = maskchans[jj];
+                padvals_tmp = s->padvals[channum];
+                offset = channum*s->spectra_per_subint;
+                for (ii = 0; ii < s->spectra_per_subint; ii++){
+                    currentdata[ii + offset] = padvals_tmp;
                 }
             }
         }
     }
+    else 
+        fftwf_execute_r2r(tplan1, currentdata, currentdata);
 
     if (s->num_ignorechans) { // These are channels we explicitly zero
-        int channum;
-        for (ii = 0; ii < s->spectra_per_subint; ii++) {
-            offset = ii * s->num_channels;
-            for (jj = 0; jj < s->num_ignorechans; jj++) {
-                channum = s->ignorechans[jj];
-                currentdata[offset + channum] = 0.0;
+        // int channum;
+        // for (ii = 0; ii < s->spectra_per_subint; ii++) {
+        //     offset = ii * s->num_channels;
+        //     for (jj = 0; jj < s->num_ignorechans; jj++) {
+        //         channum = s->ignorechans[jj];
+        //         currentdata[offset + channum] = 0.0f;
+        //     }
+        // }
+
+        for (jj = 0; jj < s->num_ignorechans; jj++) {
+            offset = s->ignorechans[jj]*s->spectra_per_subint;
+            for (ii = 0; ii < s->spectra_per_subint; ii++){
+                currentdata[ii + offset] = 0.0f;
             }
         }
     }
@@ -950,10 +994,15 @@ int prep_subbands(float *fdata, float *rawdata, int *delays, int numsubbands,
     // currentspectra gets incremented.
     if (using_MPI)
         currentspectra += s->spectra_per_subint;
-
+    
+    
+    
     // Now transpose the raw block of data so that the times in each
     // channel are the most rapidly varying index
-    fftwf_execute_r2r(tplan1, currentdata, currentdata);
+    
+    // fftwf_execute_r2r(tplan1, currentdata, currentdata);
+
+    
 
     if (firsttime) {
         SWAP(currentdata, lastdata);
@@ -961,7 +1010,7 @@ int prep_subbands(float *fdata, float *rawdata, int *delays, int numsubbands,
         return 0;
     } else {
             dedisp_subbands(currentdata, lastdata, s->spectra_per_subint,
-                        s->num_channels, delays, numsubbands, fdata);
+                        s->num_channels, delays, numsubbands, fdata, blockN, thisblock);
         SWAP(currentdata, lastdata);
         // Transpose the resulting data into spectra as a function of time
         if (transpose == 0)
@@ -970,7 +1019,97 @@ int prep_subbands(float *fdata, float *rawdata, int *delays, int numsubbands,
     }
 }
 
-int prep_subbands_GPU(float *fdata, float *rawdata, int *delays, int numsubbands,
+int read_prep_subbands_cache(float *fdata, float *rawdata, int *delays, int numsubbands,
+                  struct spectra_info *s, int transpose,
+                  int *maskchans, int *nummasked, mask * obsmask, int blockN, int thisblock)
+// This routine preps a block of raw spectra for subbanding.  It uses
+// dispersion delays in 'delays' to de-disperse the data into
+// 'numsubbands' subbands.  It stores the resulting data in vector
+// 'fdata' of length 'numsubbands' * 's->spectra_per_subint'.  The low
+// freq subband is stored first, then the next highest subband etc,
+// with 's->spectra_per_subint' floating points per subband. It
+// returns the # of points read if succesful, 0 otherwise.
+// 'maskchans' is an array of length numchans which contains a list of
+// the number of channels that were masked.  The # of channels masked
+// is returned in 'nummasked'.  'obsmask' is the mask structure to use
+// for masking.  If 'transpose'==0, the data will be kept in time
+// order instead of arranged by subband as above.
+{
+    int ii, jj, offset;
+    double starttime = 0.0;
+    static float *tmpswap, *rawdata1, *rawdata2;
+    static float *currentdata, *lastdata;
+
+    static float *currentdata_scl;
+    static float *currentdata_offs;
+    static unsigned char *currentdata_data;
+
+    static int firsttime = 1, mask = 0;
+    static fftwf_plan tplan1, tplan2;
+
+    *nummasked = 0;
+    if (firsttime) {
+        if (obsmask->numchan)
+            mask = 1;
+        rawdata1 = gen_fvect(s->spectra_per_subint * s->num_channels);
+        rawdata2 = gen_fvect(s->spectra_per_subint * s->num_channels);
+
+        currentdata_scl = malloc(s->num_channels * sizeof(float));
+        currentdata_offs = malloc(s->num_channels * sizeof(float));
+        currentdata_data = malloc(s->spectra_per_subint * s->num_channels * sizeof(unsigned char));
+
+        currentdata = rawdata1;
+        lastdata = rawdata2;
+        // Make plans to do fast transposes using FFTW
+        // tplan1 = plan_transpose(s->spectra_per_subint, s->num_channels,
+        //                         currentdata, currentdata);
+        tplan2 = plan_transpose(numsubbands, s->spectra_per_subint, fdata, fdata);
+    }
+
+    /* Read and de-disperse */
+    fread(currentdata_scl, sizeof(float), s->num_channels, s->cacheFile);
+    fread(currentdata_offs, sizeof(float), s->num_channels, s->cacheFile);
+    fread(currentdata_data, sizeof(unsigned char), s->spectra_per_subint * s->num_channels, s->cacheFile);
+    
+    float currentdata_scl_bk, currentdata_offs_bk;
+
+    for(ii=0; ii<s->num_channels; ii++)
+    {
+        currentdata_scl_bk = currentdata_scl[ii];
+        currentdata_offs_bk = currentdata_offs[ii];
+        for(jj=0; jj<s->spectra_per_subint; jj++)
+        {
+            currentdata[jj+ii*s->spectra_per_subint] = currentdata_data[jj+ii*s->spectra_per_subint]*currentdata_scl_bk + currentdata_offs_bk;
+        }
+    }
+        
+    starttime = currentspectra * s->dt; // or -1 subint?
+
+    // In mpiprepsubband, the nodes do not call read_subbands() where
+    // currentspectra gets incremented.
+    if (using_MPI)
+        currentspectra += s->spectra_per_subint;
+
+    // Now transpose the raw block of data so that the times in each
+    // channel are the most rapidly varying index
+    // fftwf_execute_r2r(tplan1, currentdata, currentdata);
+
+    if (firsttime) {
+        SWAP(currentdata, lastdata);
+        firsttime = 0;
+        return 0;
+    } else {
+        dedisp_subbands(currentdata, lastdata, s->spectra_per_subint,
+                        s->num_channels, delays, numsubbands, fdata, blockN, thisblock);
+        SWAP(currentdata, lastdata);
+        // Transpose the resulting data into spectra as a function of time
+        if (transpose == 0)
+            fftwf_execute_r2r(tplan2, fdata, fdata);
+        return s->spectra_per_subint;
+    }
+}
+
+int prep_subbands_GPU(float *fdata, float *data_gpu, float *lastdata_gpu, float *rawdata, int *delays, int numsubbands,
                   struct spectra_info *s, int transpose,
                   int *maskchans, int *nummasked, mask * obsmask)
 // This routine preps a block of raw spectra for subbanding.  It uses
@@ -991,6 +1130,7 @@ int prep_subbands_GPU(float *fdata, float *rawdata, int *delays, int numsubbands
     double starttime = 0.0;
     static float *tmpswap, *rawdata1, *rawdata2;
     static float *currentdata, *lastdata;
+    static float *currentdata_g, *lastdata_g;
     static int firsttime = 1, mask = 0;
 
     *nummasked = 0;
@@ -1001,6 +1141,9 @@ int prep_subbands_GPU(float *fdata, float *rawdata, int *delays, int numsubbands
         rawdata2 = gen_fvect(s->spectra_per_subint * s->num_channels);
         currentdata = rawdata1;
         lastdata = rawdata2;
+
+        currentdata_g = data_gpu;
+        lastdata_g = lastdata_gpu;
     }
 
     /* Read and de-disperse */
@@ -1017,11 +1160,11 @@ int prep_subbands_GPU(float *fdata, float *rawdata, int *delays, int numsubbands
         clip_times(currentdata, s->spectra_per_subint, s->num_channels,
                    s->clip_sigma, s->padvals, 1);
 
+
     if (mask) {
         if (*nummasked == -1) { /* If all channels are masked */
             for (ii = 0; ii < s->spectra_per_subint; ii++)
-                memcpy(currentdata + ii * s->num_channels,
-                       s->padvals, s->num_channels * sizeof(float));
+                memcpy(currentdata + ii * s->num_channels, s->padvals, s->num_channels * sizeof(float));
         } else if (*nummasked > 0) {    /* Only some of the channels are masked */
             int channum;
             for (ii = 0; ii < s->spectra_per_subint; ii++) {
@@ -1040,7 +1183,280 @@ int prep_subbands_GPU(float *fdata, float *rawdata, int *delays, int numsubbands
             offset = ii * s->num_channels;
             for (jj = 0; jj < s->num_ignorechans; jj++) {
                 channum = s->ignorechans[jj];
-                currentdata[offset + channum] = 0.0;
+                currentdata[offset + channum] = 0.0f;
+            }
+        }
+    }
+
+    // In mpiprepsubband, the nodes do not call read_subbands() where
+    // currentspectra gets incremented.
+    if (using_MPI)
+        currentspectra += s->spectra_per_subint;
+    
+    cudaMemcpy(currentdata_g, currentdata, sizeof(float)*s->spectra_per_subint*s->num_channels, cudaMemcpyHostToDevice);
+    
+    if (firsttime) {
+        SWAP(currentdata, lastdata);
+        SWAP(currentdata_g, lastdata_g);
+        firsttime = 0;
+        return 0;
+    } else {
+            dedisp_subbands_GPU(currentdata_g, lastdata_g, s->spectra_per_subint,
+                        s->num_channels, delays, numsubbands, fdata, transpose);
+        SWAP(currentdata, lastdata);
+        SWAP(currentdata_g, lastdata_g);
+
+        return s->spectra_per_subint;
+    }
+}
+
+int prep_subbands_GPU_cache(float *fdata, float *data_gpu, float *lastdata_gpu, float *rawdata, int *delays, int numsubbands,
+                  struct spectra_info *s, int transpose,
+                  int *maskchans, int *nummasked, mask * obsmask)
+// This routine preps a block of raw spectra for subbanding.  It uses
+// dispersion delays in 'delays' to de-disperse the data into
+// 'numsubbands' subbands.  It stores the resulting data in vector
+// 'fdata' of length 'numsubbands' * 's->spectra_per_subint'.  The low
+// freq subband is stored first, then the next highest subband etc,
+// with 's->spectra_per_subint' floating points per subband. It
+// returns the # of points read if succesful, 0 otherwise.
+// 'maskchans' is an array of length numchans which contains a list of
+// the number of channels that were masked.  The # of channels masked
+// is returned in 'nummasked'.  'obsmask' is the mask structure to use
+// for masking.  If 'transpose'==0, the data will be kept in time
+// order instead of arranged by subband as above.
+// Only *rawdata and *s in CPU
+{
+    int ii, jj, offset;
+    double starttime = 0.0;
+    static float *tmpswap;
+
+    // static float *tmpswap, *rawdata1, *rawdata2;
+    // static float *currentdata, *lastdata;
+    // static float *currentdata_g, *lastdata_g;
+    static int firsttime = 1, mask = 0;
+
+    // static float *current_scl;
+    // static float *current_offs;
+    // static unsigned char *current_data;
+
+    // static float *current_scl_g;
+    // static float *current_offs_g;
+    // static unsigned char *current_data_g;
+
+    // static float *last_scl_g;
+    // static float *last_offs_g;
+    // static unsigned char *last_data_g;
+
+    static float *currentdata_scl, *lastdata_scl;
+    static float *currentdata_offs, *lastdata_offs;
+    static unsigned char *currentdata_data, *lastdata_data;
+
+    *nummasked = 0;
+    if (firsttime) {
+        if (obsmask->numchan)
+            mask = 1;
+
+        // 分配页锁定内存
+        cudaMallocHost((void**)&current_scl_c, s->num_channels * sizeof(float));
+        cudaMallocHost((void**)&current_offs_c, s->num_channels * sizeof(float));
+        cudaMallocHost((void**)&current_data_c, s->spectra_per_subint * s->num_channels * sizeof(unsigned char));
+
+        cudaMalloc((void**)&current_scl_g, s->num_channels * sizeof(float));
+        cudaMalloc((void**)&current_offs_g, s->num_channels * sizeof(float));
+        cudaMalloc((void**)&current_data_g, s->spectra_per_subint * s->num_channels * sizeof(unsigned char));
+
+        cudaMalloc((void**)&last_scl_g, s->num_channels * sizeof(float));
+        cudaMalloc((void**)&last_offs_g, s->num_channels * sizeof(float));
+        cudaMalloc((void**)&last_data_g, s->spectra_per_subint * s->num_channels * sizeof(unsigned char));
+
+        currentdata_scl = current_scl_g;
+        currentdata_offs = current_offs_g;
+        currentdata_data = current_data_g;
+
+        lastdata_scl = last_scl_g;
+        lastdata_offs = last_offs_g;
+        lastdata_data = last_data_g;
+
+
+
+        // cudaHostAlloc((void**)&current_scl_g, s->num_channels * sizeof(float), cudaHostAllocWriteCombined | cudaHostAllocMapped);
+        // cudaHostAlloc((void**)&current_offs_g, s->num_channels * sizeof(float), cudaHostAllocWriteCombined | cudaHostAllocMapped);
+        // cudaHostAlloc((void**)&current_data_g, s->spectra_per_subint * s->num_channels * sizeof(unsigned char), cudaHostAllocWriteCombined | cudaHostAllocMapped);
+
+        // cudaHostAlloc((void**)&last_scl_g, s->num_channels * sizeof(float), cudaHostAllocWriteCombined | cudaHostAllocMapped);
+        // cudaHostAlloc((void**)&last_offs_g, s->num_channels * sizeof(float), cudaHostAllocWriteCombined | cudaHostAllocMapped);
+        // cudaHostAlloc((void**)&last_data_g, s->spectra_per_subint * s->num_channels * sizeof(unsigned char), cudaHostAllocWriteCombined | cudaHostAllocMapped);
+
+        // cudaHostGetDevicePointer(&currentdata_scl, current_scl_g, 0);
+        // cudaHostGetDevicePointer(&currentdata_offs, current_offs_g, 0);
+        // cudaHostGetDevicePointer(&currentdata_data, current_data_g, 0);
+        // cudaHostGetDevicePointer(&lastdata_scl, last_scl_g, 0);
+        // cudaHostGetDevicePointer(&lastdata_offs, last_offs_g, 0);
+        // cudaHostGetDevicePointer(&lastdata_data, last_data_g, 0);
+    }
+
+    // static cudaStream_t stream_1;
+
+    /* Read and de-disperse */
+    fread(current_scl_c, sizeof(float), s->num_channels, s->cacheFile);
+    cudaMemcpy(currentdata_scl, current_scl_c, sizeof(float)*s->num_channels, cudaMemcpyHostToDevice);
+    fread(current_offs_c, sizeof(float), s->num_channels, s->cacheFile);
+    cudaMemcpy(currentdata_offs, current_offs_c, sizeof(float)*s->num_channels, cudaMemcpyHostToDevice);
+    fread(current_data_c, sizeof(unsigned char), s->spectra_per_subint * s->num_channels, s->cacheFile);
+    cudaMemcpy(currentdata_data, current_data_c, sizeof(unsigned char)*s->num_channels*s->spectra_per_subint, cudaMemcpyHostToDevice);
+    
+    // fread(currentdata_scl, sizeof(float), s->num_channels, s->cacheFile);
+    // fread(currentdata_offs, sizeof(float), s->num_channels, s->cacheFile);
+    // fread(currentdata_data, sizeof(unsigned char), s->spectra_per_subint * s->num_channels, s->cacheFile);
+
+    // cudaStreamSynchronize(stream_1);
+
+    starttime = currentspectra * s->dt; // or -1 
+
+    if (using_MPI)
+        currentspectra += s->spectra_per_subint;
+
+    if (firsttime) {
+        SWAP(currentdata_scl, lastdata_scl);
+        SWAP(currentdata_offs, lastdata_offs);
+        SWAP(currentdata_data, lastdata_data);
+
+        firsttime = 0;
+        return 0;
+    } else {
+            dedisp_subbands_GPU_cache(currentdata_data, currentdata_scl, currentdata_offs, lastdata_data, lastdata_scl, lastdata_offs, s->spectra_per_subint,
+                        s->num_channels, delays, numsubbands, fdata, transpose);
+        SWAP(currentdata_scl, lastdata_scl);
+        SWAP(currentdata_offs, lastdata_offs);
+        SWAP(currentdata_data, lastdata_data);
+
+        return s->spectra_per_subint;
+    }
+}
+
+
+void free_prep_subband_GPU_cache_array()
+{
+    cudaFreeHost(current_scl_c);
+    cudaFreeHost(current_offs_c);
+    cudaFreeHost(current_data_c);
+
+    cudaFree(current_scl_g);
+    cudaFree(current_offs_g);
+    cudaFree(current_data_g);
+
+    cudaFree(last_scl_g);
+    cudaFree(last_offs_g);
+    cudaFree(last_data_g);
+}
+
+int write_prep_subbands_cache(float *fdata, float *rawdata, int *delays, int numsubbands,
+                  struct spectra_info *s, int transpose,
+                  int *maskchans, int *nummasked, mask * obsmask, int blockN, int thisblock, int thread)
+// This routine preps a block of raw spectra for subbanding.  It uses
+// dispersion delays in 'delays' to de-disperse the data into
+// 'numsubbands' subbands.  It stores the resulting data in vector
+// 'fdata' of length 'numsubbands' * 's->spectra_per_subint'.  The low
+// freq subband is stored first, then the next highest subband etc,
+// with 's->spectra_per_subint' floating points per subband. It
+// returns the # of points read if succesful, 0 otherwise.
+// 'maskchans' is an array of length numchans which contains a list of
+// the number of channels that were masked.  The # of channels masked
+// is returned in 'nummasked'.  'obsmask' is the mask structure to use
+// for masking.  If 'transpose'==0, the data will be kept in time
+// order instead of arranged by subband as above.
+{
+    int ii, jj, offset;
+    double starttime = 0.0;
+    static float *tmpswap, *rawdata1, *rawdata2;
+    static float *currentdata, *lastdata;
+    
+    static float *currentdata_scl;
+    static float *currentdata_offs;
+    static unsigned char *currentdata_data;
+
+    static int firsttime = 1, mask = 0;
+    static fftwf_plan tplan1;
+
+    *nummasked = 0;
+    if (firsttime) {
+        if (obsmask->numchan)
+            mask = 1;
+        rawdata1 = gen_fvect(s->spectra_per_subint * s->num_channels);
+        rawdata2 = gen_fvect(s->spectra_per_subint * s->num_channels);
+        
+        currentdata_scl = malloc(s->num_channels * sizeof(float));
+        currentdata_offs = malloc(s->num_channels * sizeof(float));
+        currentdata_data = malloc(s->spectra_per_subint * s->num_channels * sizeof(unsigned char));
+
+        currentdata = rawdata1;
+        lastdata = rawdata2;
+        // Make plans to do fast transposes using FFTW
+        tplan1 = plan_transpose(s->spectra_per_subint, s->num_channels,
+                                currentdata, currentdata);
+        // tplan2 = plan_transpose(numsubbands, s->spectra_per_subint, fdata, fdata);
+    }
+
+    /* Read and de-disperse */
+    memcpy(currentdata, rawdata,
+           s->spectra_per_subint * s->num_channels * sizeof(float));
+    starttime = currentspectra * s->dt; // or -1 subint?
+    if (mask)
+        *nummasked = check_mask(starttime, s->time_per_subint, obsmask, maskchans);
+
+    /* Clip nasty RFI if requested and we're not masking all the channels */
+    if ((s->clip_sigma > 0.0) && !(mask && (*nummasked == -1)))
+        clip_times(currentdata, s->spectra_per_subint, s->num_channels,
+                   s->clip_sigma, s->padvals, 1);
+
+    if (mask) {
+        if (*nummasked == -1) { /* If all channels are masked */
+            for (ii = 0; ii < s->spectra_per_subint; ii++)
+                memcpy(currentdata + ii * s->num_channels,
+                       s->padvals, s->num_channels * sizeof(float));
+            fftwf_execute_r2r(tplan1, currentdata, currentdata);
+        } else if (*nummasked > 0) {    /* Only some of the channels are masked */
+            // int channum;
+            // for (ii = 0; ii < s->spectra_per_subint; ii++) {
+            //     offset = ii * s->num_channels;
+            //     for (jj = 0; jj < *nummasked; jj++) {
+            //         channum = maskchans[jj];
+            //         currentdata[offset + channum] = s->padvals[channum];
+            //     }
+            // }
+            fftwf_execute_r2r(tplan1, currentdata, currentdata);
+            int channum;
+            float padvals_tmp;
+            for (jj = 0; jj < *nummasked; jj++) {
+                channum = maskchans[jj];
+                padvals_tmp = s->padvals[channum];
+                offset = channum*s->spectra_per_subint;
+                for (ii = 0; ii < s->spectra_per_subint; ii++){
+                    currentdata[ii + offset] = padvals_tmp;
+                }
+            }
+        }
+    }
+    else 
+    {
+        fftwf_execute_r2r(tplan1, currentdata, currentdata);
+    }
+
+    if (s->num_ignorechans) { // These are channels we explicitly zero
+        // int channum;
+        // for (ii = 0; ii < s->spectra_per_subint; ii++) {
+        //     offset = ii * s->num_channels;
+        //     for (jj = 0; jj < s->num_ignorechans; jj++) {
+        //         channum = s->ignorechans[jj];
+        //         currentdata[offset + channum] = 0.0;
+        //     }
+        // }
+
+        for (jj = 0; jj < s->num_ignorechans; jj++) {
+            offset = s->ignorechans[jj]*s->spectra_per_subint;
+            for (ii = 0; ii < s->spectra_per_subint; ii++){
+                currentdata[offset + ii] = 0.0f;
             }
         }
     }
@@ -1050,23 +1466,97 @@ int prep_subbands_GPU(float *fdata, float *rawdata, int *delays, int numsubbands
     if (using_MPI)
         currentspectra += s->spectra_per_subint;
 
+    // Now transpose the raw block of data so that the times in each
+    // channel are the most rapidly varying index
+    // fftwf_execute_r2r(tplan1, currentdata, currentdata);
+
     if (firsttime) {
-        SWAP(currentdata, lastdata);
+    
+        /* Write cache file*/
+        int prepvalue = 0;
+        SclData(currentdata, s->spectra_per_subint, s->num_channels, currentdata_data, currentdata_scl, currentdata_offs, thread);
+        fwrite(currentdata_scl, sizeof(float), s->num_channels, s->cacheFile);
+        fwrite(currentdata_offs, sizeof(float), s->num_channels, s->cacheFile);
+        fwrite(currentdata_data, sizeof(unsigned char), s->spectra_per_subint * s->num_channels, s->cacheFile);
+        
         firsttime = 0;
+        SWAP(currentdata, lastdata);
         return 0;
     } else {
-            dedisp_subbands_GPU(currentdata, lastdata, s->spectra_per_subint,
-                        s->num_channels, delays, numsubbands, fdata, transpose);
+
+        /* Write cache file*/
+        SclData(currentdata, s->spectra_per_subint, s->num_channels, currentdata_data, currentdata_scl, currentdata_offs, thread);
+        fwrite(currentdata_scl, sizeof(float), s->num_channels, s->cacheFile);
+        fwrite(currentdata_offs, sizeof(float), s->num_channels, s->cacheFile);
+        fwrite(currentdata_data, sizeof(unsigned char), s->spectra_per_subint * s->num_channels, s->cacheFile);
+        
+
+        // dedisp_subbands(currentdata, lastdata, s->spectra_per_subint,
+        //                 s->num_channels, delays, numsubbands, fdata, blockN, thisblock);
+
         SWAP(currentdata, lastdata);
+        // Transpose the resulting data into spectra as a function of time
+        // if (transpose == 0)
+        //     fftwf_execute_r2r(tplan2, fdata, fdata);
         return s->spectra_per_subint;
     }
 }
 
+void SclData(float *intputDATA, int x, int y, unsigned char *DATA,float *sclArray, float *offsArray, int thread)
+{
+  int i;
+  
+// #ifdef _OPENMP
+// #pragma omp parallel for shared(intputDATA, DATA, sclArray, offsArray)
+// #endif
+#ifdef _OPENMP
+// #pragma omp parallel for default(shared)
+#pragma omp parallel for num_threads(thread) shared(DATA, sclArray, offsArray)
+#endif
+  for(i=0; i<y; i++)
+  {
+    int j;
+    float min, max;
+    float value;
+    min = max = 0.0f;
+    for(j=0; j<x; j++)
+    {
+      value = intputDATA[i*x+j];
+      min = (min > value) ? value : min;
+      max = (max < value) ? value : max;
+    }
+
+    float range;
+    float scale_bk, offset_bk;
+
+    range = max - min;
+    if (max == 0.0f && min == 0.0f)
+    {
+        scale_bk = 1.0;
+        offset_bk = 0.0;
+    }
+    else 
+    {
+        if (range==0.0f)
+            scale_bk = max / 255.0f;
+        else
+          scale_bk = range / 255.0f;
+        offset_bk = min;
+    }
+    for(j=0; j<x; j++)
+    {
+        // DATA[i*x+j] = (unsigned char) floor((intputDATA[i*x+j] - offset_bk) / scale_bk + 0.5f);
+        DATA[i*x+j] = (unsigned char) ((intputDATA[i*x+j] - offset_bk) / scale_bk + 0.5f);
+    }
+    sclArray[i] = scale_bk;
+    offsArray[i] = offset_bk;
+  }
+}
 
 
 int read_subbands(float *fdata, int *delays, int numsubbands,
                   struct spectra_info *s, int transpose, int *padding,
-                  int *maskchans, int *nummasked, mask * obsmask)
+                  int *maskchans, int *nummasked, mask * obsmask, int blockN, int thisblock)
 // This routine reads a spectral block/subint from the input raw data
 // files. The routine uses dispersion delays in 'delays' to
 // de-disperse the data into 'numsubbands' subbands.  It stores the
@@ -1100,7 +1590,7 @@ int read_subbands(float *fdata, int *delays, int numsubbands,
             exit(-1);
         }
         if (0 != prep_subbands(fdata, frawdata, delays, numsubbands, s,
-                               transpose, maskchans, nummasked, obsmask)) {
+                               transpose, maskchans, nummasked, obsmask, blockN, thisblock)) {
             perror("Error: problem initializing prep_subbands() in read_subbands()");
             exit(-1);
         }
@@ -1110,7 +1600,7 @@ int read_subbands(float *fdata, int *delays, int numsubbands,
         return 0;
     }
     if (prep_subbands(fdata, frawdata, delays, numsubbands, s, transpose,
-                      maskchans, nummasked, obsmask) == s->spectra_per_subint) {
+                      maskchans, nummasked, obsmask, blockN, thisblock) == s->spectra_per_subint) {
         currentspectra += s->spectra_per_subint;
         return s->spectra_per_subint;
     } 
@@ -1120,7 +1610,71 @@ int read_subbands(float *fdata, int *delays, int numsubbands,
 
 }
 
-int read_subbands_GPU(float *fdata, int *delays, int numsubbands,
+int read_subbands_cache(float *fdata, int *delays, int numsubbands,
+                  struct spectra_info *s, int transpose, int *padding,
+                  int *maskchans, int *nummasked, mask * obsmask, int blockN, int thisblock)
+// This routine reads a spectral block/subint from the input raw data
+// files. The routine uses dispersion delays in 'delays' to
+// de-disperse the data into 'numsubbands' subbands.  It stores the
+// resulting data in vector 'fdata' of length 'numsubbands' *
+// 's->spectra_per_subint'.  The low freq subband is stored first,
+// then the next highest subband etc, with 's->spectra_per_subint'
+// floating points per subband.  It returns the # of points read if
+// successful, 0 otherwise. If padding is returned as 1, then padding
+// was added and statistics should not be calculated.  'maskchans' is
+// an array of length numchans which contains a list of the number of
+// channels that were masked.  The # of channels masked is returned in
+// 'nummasked'.  'obsmask' is the mask structure to use for masking.
+// If 'transpose'==0, the data will be kept in time order instead of
+// arranged by subband as above.
+{
+    static int firsttime = 1;
+    static float *frawdata;
+    int ifget_rawblock;
+
+    if (firsttime) {
+        // Check to make sure there isn't more dispersion across a
+        // subband than time in a block of data
+        if (delays[0] > s->spectra_per_subint) {
+            perror("\nError: there is more dispersion across a subband than time\n"
+                   "in a block of data.  Increase spectra_per_subint if possible.");
+            exit(-1);
+        }
+        // Needs to be twice as large for buffering if adding observations together
+        // frawdata = gen_fvect(2 * s->num_channels * s->spectra_per_subint);
+
+        fread(padding, sizeof(int), 1, s->cacheFile);
+        fread(&ifget_rawblock, sizeof(int), 1, s->cacheFile);
+
+        if (!ifget_rawblock) {
+            perror("Error: problem reading the raw data file in read_subbands()");
+            exit(-1);
+        }
+        if (0 != read_prep_subbands_cache(fdata, frawdata, delays, numsubbands, s,
+                               transpose, maskchans, nummasked, obsmask, blockN, thisblock)) {
+            perror("Error: problem initializing read_prep_subbands_cache() in read_subbands()");
+            exit(-1);
+        }
+        firsttime = 0;
+    }
+
+    fread(padding, sizeof(int), 1, s->cacheFile);
+    fread(&ifget_rawblock, sizeof(int), 1, s->cacheFile);
+
+
+    if (!ifget_rawblock) {
+        return 0;
+    }
+    if (read_prep_subbands_cache(fdata, frawdata, delays, numsubbands, s, transpose,
+                      maskchans, nummasked, obsmask, blockN, thisblock) == s->spectra_per_subint) {
+        currentspectra += s->spectra_per_subint;
+        return s->spectra_per_subint;
+    } else {
+        return 0;
+    }
+}
+
+int read_subbands_GPU(float *fdata, float *data_gpu, float *lastdata_gpu, int *delays, int numsubbands,
                   struct spectra_info *s, int transpose, int *padding,
                   int *maskchans, int *nummasked, mask * obsmask)
 // This routine reads a spectral block/subint from the input raw data
@@ -1144,18 +1698,20 @@ int read_subbands_GPU(float *fdata, int *delays, int numsubbands,
     if (firsttime) {
         // Check to make sure there isn't more dispersion across a
         // subband than time in a block of data
-        // if (delays[0] > s->spectra_per_subint) {
-        //     perror("\nError: there is more dispersion across a subband than time\n"
-        //            "in a block of data.  Increase spectra_per_subint if possible.");
-        //     exit(-1);
-        // }
+        int delay_bk;
+        cudaMemcpy(&delay_bk, delays, sizeof(int), cudaMemcpyDeviceToHost);
+        if (delay_bk > s->spectra_per_subint) {
+            perror("\nError: there is more dispersion across a subband than time\n"
+                   "in a block of data.  Increase spectra_per_subint if possible.");
+            exit(-1);
+        }
         // Needs to be twice as large for buffering if adding observations together
         frawdata = gen_fvect(2 * s->num_channels * s->spectra_per_subint);
         if (!s->get_rawblock(frawdata, s, padding)) {
             perror("Error: problem reading the raw data file in read_subbands()");
             exit(-1);
         }
-        if (0 != prep_subbands_GPU(fdata, frawdata, delays, numsubbands, s,
+        if (0 != prep_subbands_GPU(fdata, data_gpu, lastdata_gpu, frawdata, delays, numsubbands, s,
                                transpose, maskchans, nummasked, obsmask)) {
             perror("Error: problem initializing prep_subbands_GPU() in read_subbands()");
             exit(-1);
@@ -1167,7 +1723,7 @@ int read_subbands_GPU(float *fdata, int *delays, int numsubbands,
     }
 
 
-    if (prep_subbands_GPU(fdata, frawdata, delays, numsubbands, s, transpose,
+    if (prep_subbands_GPU(fdata, data_gpu, lastdata_gpu, frawdata, delays, numsubbands, s, transpose,
                       maskchans, nummasked, obsmask) == s->spectra_per_subint) {
         currentspectra += s->spectra_per_subint;
         return s->spectra_per_subint;
@@ -1178,7 +1734,146 @@ int read_subbands_GPU(float *fdata, int *delays, int numsubbands,
 
 }
 
+int read_subbands_GPU_cache(float *fdata, float *data_gpu, float *lastdata_gpu, int *delays, int numsubbands, struct spectra_info *s, int transpose, int *padding, int *maskchans, int *nummasked, mask *obsmask)
+// This routine reads a spectral block/subint from the input raw data
+// files. The routine uses dispersion delays in 'delays' to
+// de-disperse the data into 'numsubbands' subbands.  It stores the
+// resulting data in vector 'fdata' of length 'numsubbands' *
+// 's->spectra_per_subint'.  The low freq subband is stored first,
+// then the next highest subband etc, with 's->spectra_per_subint'
+// floating points per subband.  It returns the # of points read if
+// successful, 0 otherwise. If padding is returned as 1, then padding
+// was added and statistics should not be calculated.  'maskchans' is
+// an array of length numchans which contains a list of the number of
+// channels that were masked.  The # of channels masked is returned in
+// 'nummasked'.  'obsmask' is the mask structure to use for masking.
+// If 'transpose'==0, the data will be kept in time order instead of
+// arranged by subband as above.
+{
+    static int firsttime = 1;
+    static float *frawdata;
+    int ifget_rawblock;
 
+
+    if (firsttime) {
+        // Check to make sure there isn't more dispersion across a
+        // subband than time in a block of data
+        int delay_bk;
+        cudaMemcpy(&delay_bk, delays, sizeof(int), cudaMemcpyDeviceToHost);
+        if (delay_bk > s->spectra_per_subint) {
+            perror("\nError: there is more dispersion across a subband than time\n"
+                   "in a block of data.  Increase spectra_per_subint if possible.");
+            exit(-1);
+        }
+        // Needs to be twice as large for buffering if adding observations together
+        // frawdata = gen_fvect(2 * s->num_channels * s->spectra_per_subint);
+
+        fread(padding, sizeof(int), 1, s->cacheFile);
+        fread(&ifget_rawblock, sizeof(int), 1, s->cacheFile);
+
+        if (!ifget_rawblock) {
+            perror("Error: problem reading the raw data file in read_subbands()");
+            exit(-1);
+        }
+        if (0 != prep_subbands_GPU_cache(fdata, data_gpu, lastdata_gpu, frawdata, delays, numsubbands, s,
+                               transpose, maskchans, nummasked, obsmask)) {
+            perror("Error: problem initializing read_prep_subbands_cache() in read_subbands()");
+            exit(-1);
+        }
+        firsttime = 0;
+    }
+
+    fread(padding, sizeof(int), 1, s->cacheFile);
+    fread(&ifget_rawblock, sizeof(int), 1, s->cacheFile);
+
+    if (!ifget_rawblock) {
+        return 0;
+    }
+
+
+    if (prep_subbands_GPU_cache(fdata, data_gpu, lastdata_gpu, frawdata, delays, numsubbands, s, transpose,
+                      maskchans, nummasked, obsmask) == s->spectra_per_subint) {
+        currentspectra += s->spectra_per_subint;
+        return s->spectra_per_subint;
+    } 
+    else {
+        return 0;
+    }
+}
+int write_subbands_cache(float *fdata, int *delays, int numsubbands,
+                  struct spectra_info *s, int transpose, int *padding,
+                  int *maskchans, int *nummasked, mask * obsmask, int blockN, int thisblock, int thread)
+// This routine reads a spectral block/subint from the input raw data
+// files. The routine uses dispersion delays in 'delays' to
+// de-disperse the data into 'numsubbands' subbands.  It stores the
+// resulting data in vector 'fdata' of length 'numsubbands' *
+// 's->spectra_per_subint'.  The low freq subband is stored first,
+// then the next highest subband etc, with 's->spectra_per_subint'
+// floating points per subband.  It returns the # of points read if
+// successful, 0 otherwise. If padding is returned as 1, then padding
+// was added and statistics should not be calculated.  'maskchans' is
+// an array of length numchans which contains a list of the number of
+// channels that were masked.  The # of channels masked is returned in
+// 'nummasked'.  'obsmask' is the mask structure to use for masking.
+// If 'transpose'==0, the data will be kept in time order instead of
+// arranged by subband as above.
+{
+    static int firsttime = 1;
+    static float *frawdata;
+
+    if (firsttime) {
+        // Check to make sure there isn't more dispersion across a
+        // subband than time in a block of data
+        if (delays[0] > s->spectra_per_subint) {
+            perror("\nError: there is more dispersion across a subband than time\n"
+                   "in a block of data.  Increase spectra_per_subint if possible.");
+            exit(-1);
+        }
+        // Needs to be twice as large for buffering if adding observations together
+        frawdata = gen_fvect(2 * s->num_channels * s->spectra_per_subint);
+        if (!s->get_rawblock(frawdata, s, padding)) {
+            perror("Error: problem reading the raw data file in read_subbands()");
+            int ifget_rawblock = 0;
+            fwrite(padding, sizeof(int), 1, s->cacheFile); 
+            fwrite(&ifget_rawblock, sizeof(int), 1, s->cacheFile);
+            exit(-1);
+        }
+        else
+        {
+            int ifget_rawblock = 1;
+            fwrite(padding, sizeof(int), 1, s->cacheFile); 
+            fwrite(&ifget_rawblock, sizeof(int), 1, s->cacheFile);
+        }
+
+        if (0 != write_prep_subbands_cache(fdata, frawdata, delays, numsubbands, s,
+                               transpose, maskchans, nummasked, obsmask, blockN, thisblock, thread)) {
+            perror("Error: problem initializing write_prep_subbands_cache() in read_subbands()");
+            exit(-1);
+        }
+        firsttime = 0;
+    }
+    
+    if (!s->get_rawblock(frawdata, s, padding)) {
+        int ifget_rawblock = 0;
+        fwrite(padding, sizeof(int), 1, s->cacheFile);
+        fwrite(&ifget_rawblock, sizeof(int), 1, s->cacheFile);
+        return 0;
+    }
+    else
+    {
+        int ifget_rawblock = 1;
+        fwrite(padding, sizeof(int), 1, s->cacheFile); 
+        fwrite(&ifget_rawblock, sizeof(int), 1, s->cacheFile);
+    }
+
+    if (write_prep_subbands_cache(fdata, frawdata, delays, numsubbands, s, transpose,
+                      maskchans, nummasked, obsmask, blockN, thisblock, thread) == s->spectra_per_subint) {
+        currentspectra += s->spectra_per_subint;
+        return s->spectra_per_subint;
+    } else {
+        return 0;
+    }
+}
 
 void flip_band(float *fdata, struct spectra_info *s)
 // Flip the bandpass

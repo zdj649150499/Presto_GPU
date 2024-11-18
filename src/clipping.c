@@ -86,14 +86,18 @@ int clip_times(float *rawdata, int ptsperblk, int numchan, float clip_sigma,
     zero_dm_block = gen_fvect(ptsperblk);
     ftmp = gen_fvect(ptsperblk);
 
+    float zero_dm_block_val;
     /* Calculate the zero DM time series */
     for (ii = 0; ii < ptsperblk; ii++) {
-        zero_dm_block[ii] = 0.0;
+        // zero_dm_block[ii] = 0.0;
+        zero_dm_block_val= 0.0f;
         loffset = ii * numchan;
         powptr = rawdata + loffset;
         for (jj = 0; jj < numchan; jj++)
-            zero_dm_block[ii] += *powptr++;
-        ftmp[ii] = zero_dm_block[ii];
+            // zero_dm_block[ii] += *powptr++;
+            zero_dm_block_val += *powptr++;
+        ftmp[ii] = zero_dm_block_val;
+        zero_dm_block[ii] = zero_dm_block_val;
     }
     avg_var(ftmp, ptsperblk, &current_avg, &current_std);
     current_std = sqrt(current_std);

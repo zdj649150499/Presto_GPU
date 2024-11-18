@@ -1,6 +1,8 @@
 #include "presto.h"
 #include "float.h"
 
+#include "cuda.cuh"
+
 /* The number of points to work with at a time         */
 /* This must be the same as the WORKLEN in profile.c!  */
 #define WORKLEN 16384
@@ -70,6 +72,12 @@ static void add_to_prof(double *prof, double *buffer, int N,
     while (deltaphase > 1e-12) { // Close to or above zero
         // The integer bin number
         icurbin = (int) floor(curbin + 1e-12);
+        // icurbin = (int)(curbin + 1e-12);
+        // if (icurbin > curbin + 1e-12) {
+        //     icurbin--;  // 修正向下取整
+        // }
+
+
         // Amount of phase we can get in current bin
         dphs = ((icurbin + 1.0) - curbin) * profbinwidth;
         // Make sure that icurbin is not outside bounds (can happen
@@ -102,6 +110,9 @@ static void add_to_prof(double *prof, double *buffer, int N,
         }
         deltaphase -= dphs;
         curbin += dphs * N;
+
+        // if(deltaphase > 1e-12)
+        //     printf(" deltaphase: %e   dphs:  %e\n",deltaphase, dphs);
     }
     return;
 }
@@ -501,6 +512,8 @@ double fold(float *data, int numdata, double dt, double tlo,
     double dev, delaytlo = 0.0, delaythi = 0.0, delaylo = 0.0, delayhi = 0.0;
     double *delayptr = NULL, *delaytimeptr = NULL, dtmp;
 
+    float data_ii;
+
     /* Initialize some variables and save some FLOPs later... */
 
     fdot /= 2.0;
@@ -514,7 +527,6 @@ double fold(float *data, int numdata, double dt, double tlo,
     do {                        /* Loop over the on-off pairs */
 
         /* Set the on-off pointers and variables */
-
         if (ONOFF) {
             onbin = *onoffptr;
             offbin = *(onoffptr + 1);
@@ -525,16 +537,12 @@ double fold(float *data, int numdata, double dt, double tlo,
         }
 
         /* Initiate the folding start time */
-
         T = tlo + onbin * dt;
         TD = T;
 
         /* Set the delay pointers and variables */
-
         if (DELAYS) {
-
             /* Guess that the next delay we want is the next available */
-
             arrayoffset += 2;   /* Beware nasty NR zero-offset kludges! */
             hunt(delaytimes - 1, numdelays, T, &arrayoffset);
             arrayoffset--;
@@ -544,33 +552,24 @@ double fold(float *data, int numdata, double dt, double tlo,
             delaythi = *(delaytimeptr + 1);
             delaylo = *delayptr;
             delayhi = *(delayptr + 1);
-
             /* Adjust the folding start time for the delays */
-
             TD -= LININTERP(TD, delaytlo, delaythi, delaylo, delayhi);
         }
 
         /* Get the starting pulsar phase (cyclic). */
-
         phase = TD * (TD * (TD * fdotdot + fdot) + fo) + startphs;
         lophase = (phase < 0.0) ? 1.0 + modf(phase, &dtmp) : modf(phase, &dtmp);
 
         /* Generate the profile for this onoff pair */
-
         for (ii = onbin; ii <= offbin; ii++) {
-
             /* Calculate the barycentric time for the next point. */
-
             Tnext = tlo + (ii + 1) * dt;
             TDnext = Tnext;
 
             /* Set the delay pointers and variables */
-
             if (DELAYS) {
                 if (Tnext > delaythi) {
-
                     /* Guess that the next delay we want is the next available */
-
                     arrayoffset += 2;   /* Beware nasty NR zero-offset kludges! */
                     hunt(delaytimes - 1, numdelays, Tnext, &arrayoffset);
                     arrayoffset--;
@@ -583,40 +582,38 @@ double fold(float *data, int numdata, double dt, double tlo,
                 }
 
                 /* Adjust the folding start time for the delays */
-
                 TDnext -= LININTERP(Tnext, delaytlo, delaythi, delaylo, delayhi);
             }
 
             /* Get the pulsar phase (cyclic) for the next point. */
-
             phasenext = TDnext * (TDnext * (TDnext * fdotdot + fdot)
                                   + fo) + startphs;
 
             /* How much total phase does the data point cover? */
-
             deltaphase = phasenext - phase;
-
+            
+            data_ii = data[ii];
             /* Add the current point to the buffer or the profile */
-
             if (standard)
                 add_to_prof(prof, buffer, numprof, lophase,
-                            deltaphase, data[ii], phaseadded);
+                            deltaphase, data_ii, phaseadded);
             else
                 add_to_prof_sample(prof, buffer, numprof, lophase,
-                                   deltaphase, data[ii]);
+                                   deltaphase, data_ii);
+
+
+            // printf("\n%d    %d    %d    %Le    %Le    %Le    %Le    %e",ii, DELAYS, numprof, lophase, phase, deltaphase, 1.0L*numprof*lophase, *phaseadded);
 
             /* Update variables */
-
             hiphase = lophase + deltaphase;
             lophase = hiphase - (int) hiphase;
             phase = phasenext;
 
             /* Use clever single pass mean and variance calculation */
-
             stats->numdata += 1.0;
-            dev = data[ii] - stats->data_avg;
+            dev = data_ii - stats->data_avg;
             stats->data_avg += dev / stats->numdata;
-            stats->data_var += dev * (data[ii] - stats->data_avg);
+            stats->data_var += dev * (data_ii - stats->data_avg);
         }
 
     } while (offbin < numdata - 1 && offbin != 0);
@@ -644,6 +641,21 @@ double fold(float *data, int numdata, double dt, double tlo,
         1.0 + phasenext - (int) phasenext : phasenext - (int) phasenext;
 
     return (phasenext);
+}
+
+void fold_2_gpu(float *data, int nsub, int numdata, double dt, double tlo,
+            double *prof, int numprof, double startphs,
+            double *buffer, double *phaseadded,
+            double fo, double fdot, double fdotdot, int flags,
+            double *delays, double *delaytimes, int numdelays,
+            int *onoffpairs, foldstats_gpu * stats, int standard, int worklen)
+{
+    fold_gpu_cu(data, nsub, numdata, dt, tlo,
+            prof, numprof, startphs,
+            buffer, phaseadded,
+            fo, fdot, fdotdot, flags,
+            delays, delaytimes, numdelays,
+            onoffpairs, stats, standard, ONOFF, DELAYS, worklen);
 }
 
 #undef WORKLEN
@@ -703,12 +715,12 @@ void combine_profs(double *profs, foldstats * instats, int numprofs,
 /* The input stats in 'instats' are combined and placed in 'outstats'   */
 {
     int ii, jj, kk, index = 0, offset;
-    double *local_delays;
+    // double *local_delays;
 
     /* Initiate the output statistics */
     initialize_foldstats(outstats);
     outstats->numprof = proflen;
-    local_delays = gen_dvect(numprofs);
+    // local_delays = gen_dvect(numprofs);
 
     /* Convert all the delays to positive offsets from   */
     /* the phase=0 profile bin, in units of profile bins */
@@ -716,11 +728,11 @@ void combine_profs(double *profs, foldstats * instats, int numprofs,
     /*        we want positiev numbers to represent      */
     /*        shifts _to_ the right not _from_ the right */
 
-    for (ii = 0; ii < numprofs; ii++) {
-        local_delays[ii] = fmod(-delays[ii], proflen);
-        if (local_delays[ii] < 0.0)
-            local_delays[ii] += proflen;
-    }
+    // for (ii = 0; ii < numprofs; ii++) {
+    //     local_delays[ii] = fmod(-delays[ii], proflen);
+    //     if (local_delays[ii] < 0.0)
+    //         local_delays[ii] += proflen;
+    // }
 
     /* Set the output array to zeros */
     for (ii = 0; ii < proflen; ii++)
@@ -730,7 +742,17 @@ void combine_profs(double *profs, foldstats * instats, int numprofs,
     for (ii = 0; ii < numprofs; ii++) {
 
         /* Calculate the appropriate offset into the profile array */
-        offset = (int) (local_delays[ii] + 0.5);
+        // offset = (int) (local_delays[ii] + 0.5);
+
+        // 优化后的 local_delays_bk 计算
+        int int_delays = (int)(delays[ii] + 0.5);
+        int local_delays_bk = (-int_delays) % proflen;
+        if (local_delays_bk < 0) {
+            local_delays_bk += proflen;
+        }
+        offset = local_delays_bk;
+
+
 
         /* Sum the profiles */
         for (jj = 0, kk = proflen - offset; jj < offset; jj++, kk++, index++)
@@ -755,9 +777,78 @@ void combine_profs(double *profs, foldstats * instats, int numprofs,
     /* Calculate the reduced chi-squared */
     outstats->redchi = chisqr(outprof, proflen, outstats->prof_avg,
                               outstats->prof_var) / (proflen - 1.0);
-    vect_free(local_delays);
+    // vect_free(local_delays);
 }
 
+void combine_profs_1(double *profs, foldstats *instats, int numprofs, 
+		   int proflen, double *delays, double *outprof,
+		   foldstats *outstats)
+/* Combine a series of 'numprofs' profiles, each of length 'proflen',   */
+/* into a single profile of length 'proflen'.  The profiles are         */
+/* summed after the appropriate 'delays' are added to each profile.     */
+/* The result is a profile in 'outprof' (which must be pre-allocated)   */
+/* The input stats in 'instats' are combined and placed in 'outstats'   */
+{
+    int ii, jj, kk, index = 0, offset;
+    // double local_delays_bk;
+
+    /* Initiate the output statistics */
+    initialize_foldstats(outstats);
+    outstats->numprof = proflen;
+    // local_delays = gen_dvect(numprofs);
+
+    /* Convert all the delays to positive offsets from   */
+    /* the phase=0 profile bin, in units of profile bins */
+    /* Note:  The negative sign refers to the fact that  */
+    /*        we want positiev numbers to represent      */
+    /*        shifts _to_ the right not _from_ the right */
+
+    /* Set the output array to zeros */
+    for (ii = 0; ii < proflen; ii++)
+        outprof[ii] = 0.0;
+
+    /* Loop over the profiles */
+    for (ii = 0; ii < numprofs; ii++) {
+        
+        // local_delays_bk = fmod(-delays[ii], proflen);
+        // if (local_delays_bk < 0.0)
+        //     local_delays_bk += proflen;
+        // /* Calculate the appropriate offset into the profile array */
+        // offset = (int) (local_delays_bk + 0.5);
+
+        int int_delays = (int)(delays[ii] + 0.5);
+        int local_delays_bk = (-int_delays) % proflen;
+        if (local_delays_bk < 0) {
+            local_delays_bk += proflen;
+        }
+        offset = local_delays_bk;
+        
+
+        /* Sum the profiles */
+        for (jj = 0, kk = proflen - offset; jj < offset; jj++, kk++, index++)
+            outprof[kk] += profs[index];
+        for (kk = 0; jj < proflen; jj++, kk++, index++)
+            outprof[kk] += profs[index];
+
+        /* Update the output statistics structure */
+        outstats->numdata += instats[ii].numdata;
+        outstats->data_avg += instats[ii].data_avg;
+        outstats->data_var += instats[ii].data_var;
+        outstats->prof_avg += instats[ii].prof_avg;
+        outstats->prof_var += instats[ii].prof_var;
+    }
+
+    /* Profile information gets added together, but */
+    /* data set info gets averaged together.        */
+
+    outstats->data_avg /= numprofs;
+    outstats->data_var /= numprofs;
+
+    /* Calculate the reduced chi-squared */
+    outstats->redchi = chisqr(outprof, proflen, outstats->prof_avg,
+                              outstats->prof_var) / (proflen - 1.0);
+    // vect_free(local_delays);
+}
 
 void initialize_foldstats(foldstats * stats)
 /* Zeroize all of the components of stats */
@@ -770,3 +861,8 @@ void initialize_foldstats(foldstats * stats)
     stats->prof_var = 0.0;      /* Variance of the profile bins       */
     stats->redchi = 0.0;        /* Reduced chi-squared of the profile */
 }
+
+
+
+
+

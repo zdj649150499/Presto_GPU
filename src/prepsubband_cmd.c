@@ -120,6 +120,8 @@ static Cmdline cmd = {
   /* ignorechanstrP = */ 0,
   /* ignorechanstr = */ (char*)0,
   /* ignorechanstrC = */ 0,
+  /***** -cache: Read/Write data from cache */
+  /* cacheP = */ 0,
   /***** uninterpreted rest of command line */
   /* argc = */ 0,
   /* argv = */ (char**)0,
@@ -1136,6 +1138,15 @@ showOptionValues(void)
       printf("  value = `%s'\n", cmd.ignorechanstr);
     }
   }
+
+  /***** -cache: Read/Write data from cache */
+  if( !cmd.cacheP ) {
+    printf("-cache not found.\n");
+  } else {
+    printf("-cache found:\n");
+  }
+
+
   if( !cmd.argc ) {
     printf("no remaining parameters in argv\n");
   } else {
@@ -1215,6 +1226,8 @@ usage(void)
   fprintf(stderr,"%s","                 1 char* value\n");
   fprintf(stderr,"%s","    -ignorechan: Comma separated string (no spaces!) of channels to ignore (or file containing such string).  Ranges are specified by min:max[:step]\n");
   fprintf(stderr,"%s","                 1 char* value\n");
+  fprintf(stderr,"%s","         -cache: Read/Write data from/to a cache file (read for 'prepsubband' and 'prepfold', write for 'prepcache')\n");
+  fprintf(stderr,"%s","                 default: not do this ('***filename_cac' or '***fileneme_cac0' for 0DM)\n");
   fprintf(stderr,"%s","         infile: Input data file name.  If the data is not in a known raw format, it should be a single channel of single-precision floating point data.  In this case a '.inf' file with the same root filename must also exist (Note that this means that the input data file must have a suffix that starts with a period)\n");
   fprintf(stderr,"%s","                 1...16384 values\n");
   fprintf(stderr,"%s","  version: 28Jun17\n");
@@ -1251,7 +1264,7 @@ parseCmdline(int argc, char **argv)
       i = getIntOpt(argc, argv, i, &cmd.cuda, 1);
       cmd.cudaC = i-keep;
       // checkIntHigher("-ncpus", &cmd.ncpus, cmd.ncpusC, 1);
-      checkIntLower("-cuda", &cmd.cuda, cmd.cudaC, 0);
+      checkIntLower("-cuda", &cmd.cuda, cmd.cudaC, 128);
       continue;
     }
 
@@ -1468,6 +1481,11 @@ parseCmdline(int argc, char **argv)
       cmd.ignorechanstrP = 1;
       i = getStringOpt(argc, argv, i, &cmd.ignorechanstr, 1);
       cmd.ignorechanstrC = i-keep;
+      continue;
+    }
+
+    if( 0==strcmp("-cache", argv[i]) ) {
+      cmd.cacheP = 1;
       continue;
     }
 

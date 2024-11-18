@@ -17,6 +17,8 @@
 #include "database.h"
 #include "makedata.h"
 
+
+
 #ifndef SQRT2
 #define SQRT2         1.4142135623730950488016887242096980785696718753769
 #endif
@@ -276,6 +278,10 @@ typedef struct bird{
   double lobin;
   double hibin;
 } bird;
+
+
+double *subbanddelays;
+int *dmdelays_subband_int;
 
 /*****  Function Prototypes    *****/
 
@@ -549,6 +555,7 @@ void switch_f_and_p(double in, double ind, double indd,
 /*  dispersion.c:  */
 /*  Functions to de-disperse data */
 
+void gettread( int thread_input);
 
 double tree_max_dm(int numchan, double dt, double lofreq, double hifreq);
 /* Return the maximum Dispersion Measure (dm) in cm-3 pc, the  */
@@ -573,6 +580,8 @@ double dm_from_delay(double delay, double freq_emitted);
 
 double *dedisp_delays(int numchan, double dm, double lofreq, 
 		      double chanwidth, double voverc);
+void *dedisp_delays_1(int numchan, double dm, double lofreq,
+                      double chanwidth, double voverc, double *delays);
 /* Return an array of delays (sec) for dedispersing 'numchan'    */
 /* channels at a DM of 'dm'.  'lofreq' is the center frequency   */
 /* in MHz of the lowest frequency channel.  'chanwidth' is the   */
@@ -593,6 +602,8 @@ void dedisp(unsigned char *data, unsigned char *lastdata, int numpts,
 double *subband_delays(int numchan, int numsubbands, double dm, 
 		       double lofreq, double chanwidth, 
 		       double voverc);
+void *subband_delays_1(int numchan, int numsubbands, double dm,
+                       double lofreq, double chanwidth, double voverc, double *subbanddelays);
 /* Return an array of delays (sec) for the highest frequency  */
 /* channels of each subband used in a subband de-dispersion.  */
 /* These are the delays described in the 'Note:' in the       */
@@ -621,7 +632,7 @@ double *subband_search_delays(int numchan, int numsubbands, double dm,
 
 void dedisp_subbands(float *data, float *lastdata,
                      int numpts, int numchan, 
-                     int *delays, int numsubbands, float *result);
+                     int *delays, int numsubbands, float *result, int blockN, int thisblock);
 // De-disperse a stretch of data with numpts * numchan points into
 // numsubbands subbands.  Each time point for each subband is a float
 // in the result array.  The result array order is subbands of
@@ -632,6 +643,14 @@ void dedisp_subbands(float *data, float *lastdata,
 // point.
 
 void float_dedisp(float *data, float *lastdata,
+                  int numpts, int numchan,
+                  int *delays, float approx_mean, float *result, int transpose);
+// De-disperse a stretch of data with numpts * numchan points. The
+// delays (in bins) are in delays for each channel.  The result is
+// returned in result.  The input data and delays are always in
+// ascending frequency order.  Input data are ordered in time, with
+// the channels stored together at each time point.
+void float_dedisp_time(float *data, float *lastdata,
                   int numpts, int numchan,
                   int *delays, float approx_mean, float *result);
 // De-disperse a stretch of data with numpts * numchan points. The
@@ -644,6 +663,9 @@ void combine_subbands(double *inprofs, foldstats *stats,
 		      int numparts, int numsubbands, int proflen, 
 		      int *delays, double *outprofs, 
 		      foldstats *outprofstats);
+void combine_subbands_1(double *inprofs,
+                      int numparts, int numsubbands, int proflen,
+                      int *delays, double *outprofs);
 /* Combine 'nparts' sets of 'numsubbands' profiles, each of length     */
 /* 'proflen' into a 'nparts' de-dispersed profiles.  The de-dispersion */
 /* uses the 'delays' (of which there are 'numsubbands' many) to        */
@@ -725,6 +747,7 @@ void get_rawbin_cand(char *filenm, int candnum, rawbincand * cand);
 /*  Functions for getting information from an FFT file  */
 
 fcomplex *read_fcomplex_file(FILE *file, long firstpt, long numpts);
+void *read_fcomplex_file_gpu(FILE * file, long firstpt, long numpts, fcomplex *result);
 /* Return an fcomplex vector with complex data taken from a file. */
 /* Argumants:                                                     */
 /*   'file' is a pointer to the file you want to access.          */
@@ -1288,6 +1311,7 @@ double fold(float *data, int numdata, double dt, double tlo,
 	    double fo, double fdot, double fdotdot, int flags, 
 	    double *delays, double *delaytimes, int numdelays, 
 	    int *onoffpairs, foldstats *stats, int standard);
+
 /* This routine is a general pulsar folding algorithm.  It will fold  */
 /* data for a pulsar with single and double frequency derivatives and */
 /* with arbitrary pulse delays (for example: variable time delays     */
@@ -1342,6 +1366,9 @@ void shift_prof(double *prof, int proflen, int shift, double *outprof);
 /* Place the shifted  profile in 'outprof'.                  */
 
 void combine_profs(double *profs, foldstats *instats, int numprofs, 
+		   int proflen, double *delays, double *outprof,
+		   foldstats *outstats);
+void combine_profs_1(double *profs, foldstats *instats, int numprofs, 
 		   int proflen, double *delays, double *outprof,
 		   foldstats *outstats);
 /* Combine a series of 'numprofs' profiles, each of length 'proflen',   */

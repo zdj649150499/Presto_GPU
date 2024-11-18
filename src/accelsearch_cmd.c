@@ -1136,7 +1136,7 @@ Cmdline *parseCmdline(int argc, char **argv)
         i = getIntOpt(argc, argv, i, &cmd.cuda, 1);
         cmd.cudaC = i-keep;
         // checkIntHigher("-ncpus", &cmd.ncpus, cmd.ncpusC, 1);
-        checkIntLower("-cuda", &cmd.cuda, cmd.cudaC, 0);
+        checkIntLower("-cuda", &cmd.cuda, cmd.cudaC, 128);
         continue;
         }
 

@@ -3,6 +3,8 @@
 #include "plot2d.h"
 #include "float.h"
 
+#include "cuda.cuh"
+
 /*
 #define OUTPUT_DMS 1
 */
@@ -315,7 +317,7 @@ void CSS_profs(double *inprofs, double *outprofs,
 }
 
 
-void prepfold_plot(prepfoldinfo * search, plotflags * flags, int xwin, float *ppdot)
+void prepfold_plot(prepfoldinfo * search, plotflags * flags, int xwin, float *ppdot, int cudaP)
 /* Make the beautiful 1 page prepfold output */
 {
     int ii, jj, profindex = 0, loops = 1, ct, bestidm = 0, bestip = 0, bestipd = 0;
@@ -497,44 +499,100 @@ void prepfold_plot(prepfoldinfo * search, plotflags * flags, int xwin, float *pp
             }
             vect_free(tmp_profs);
         }
+        
+
+        // if(cmd->nosearchP && numpdds==1)
 
         if (ppdot == NULL) {    /* Generate the p-pdot plane */
-            int ip, ipd;
+            if(cudaP)
+            {
+                ppdot2d = gen_fvect(search->numperiods * search->numpdots);
+                double *search_pdots_gpu;
+                double *search_periods_gpu;
+                double *ddprofs_gpu;
+                double *pdd_delays_gpu;
+                float *parttimes_gpu;
+                float *currentstats_redchi;
 
-            ppdot2d = gen_fvect(search->numperiods * search->numpdots);
-            for (ipd = 0; ipd < search->numpdots; ipd++) {      /* Loop over the pds */
+                cudaMalloc((void**)&search_pdots_gpu, sizeof(double)* search->numpdots);
+                cudaMalloc((void**)&search_periods_gpu, sizeof(double)*search->numperiods);
+                cudaMalloc((void**)&ddprofs_gpu, sizeof(double)* search->npart * search->proflen);
+                cudaMalloc((void**)&pdd_delays_gpu, sizeof(double)* search->npart);
+                cudaMalloc((void**)&parttimes_gpu, sizeof(float)*(search->npart + 1));
+                cudaMalloc((void**)&currentstats_redchi, sizeof(float) * search->numperiods * search->numpdots);
 
-                /* Compute the error in fdot, and its delays */
-                dfd = switch_pfdot(pfold, search->pdots[ipd]) - search->fold.p2;
+                cudaMemcpy(search_pdots_gpu, search->pdots, sizeof(double)*search->numpdots, cudaMemcpyHostToDevice);
+                cudaMemcpy(search_periods_gpu, search->periods, sizeof(double)*search->numperiods, cudaMemcpyHostToDevice);
+                cudaMemcpy(pdd_delays_gpu, pdd_delays, sizeof(double)*search->npart, cudaMemcpyHostToDevice);
+                cudaMemcpy(ddprofs_gpu, ddprofs, sizeof(double)*search->npart * search->proflen, cudaMemcpyHostToDevice);
+                cudaMemcpy(parttimes_gpu, parttimes, sizeof(float)*(search->npart + 1), cudaMemcpyHostToDevice);
+
+                double outstats_prof_avg = 0.0;
+                double outstats_prof_var = 0.0;
                 for (ii = 0; ii < search->npart; ii++)
-                    pd_delays[ii] =
-                        pdd_delays[ii] + fdot2phasedelay(dfd, parttimes[ii]);
+                {
+                    outstats_prof_avg += ddstats[ii].prof_avg;
+                    outstats_prof_var += ddstats[ii].prof_var;
+                }
 
-                for (ip = 0; ip < search->numperiods; ip++) {   /* Loop over the ps */
-                    df = 1.0 / search->periods[ip] - search->fold.p1;
+                combine_profs_2_gpu(ddprofs_gpu, search_pdots_gpu, search_periods_gpu, parttimes_gpu, search->numpdots, search->numperiods, search->npart, search->proflen, outstats_prof_avg, outstats_prof_var, currentstats_redchi, pfold, search->fold.p2, search->fold.p1, pdd_delays_gpu, chifact);
+                
+                cudaMemcpy(ppdot2d, currentstats_redchi, sizeof(float)*search->numperiods * search->numpdots, cudaMemcpyDeviceToHost);
 
-                    /* Compute the phase offsets for each subintegration */
+
+                cudaFree(search_pdots_gpu);
+                cudaFree(search_periods_gpu);
+                cudaFree(ddprofs_gpu);
+                cudaFree(parttimes_gpu);
+                cudaFree(pdd_delays_gpu);
+                cudaFree(parttimes_gpu);
+                cudaFree(currentstats_redchi);
+            }
+            else
+            {
+                int ip, ipd;
+
+                ppdot2d = gen_fvect(search->numperiods * search->numpdots);
+                for (ipd = 0; ipd < search->numpdots; ipd++) {      /* Loop over the pds */
+
+                    /* Compute the error in fdot, and its delays */
+                    dfd = switch_pfdot(pfold, search->pdots[ipd]) - search->fold.p2;
                     for (ii = 0; ii < search->npart; ii++)
-                        delays[ii] = (pd_delays[ii] +
-                                      df * parttimes[ii]) * search->proflen;
+                        pd_delays[ii] =
+                            pdd_delays[ii] + fdot2phasedelay(dfd, parttimes[ii]);
 
-                    /* Combine the profiles usingthe above computed delays */
-                    combine_profs(ddprofs, ddstats, search->npart, search->proflen,
-                                  delays, currentprof, &currentstats);
-                    ppdot2d[ipd * search->numperiods + ip] =
-                        currentstats.redchi * chifact;
+                    for (ip = 0; ip < search->numperiods; ip++) {   /* Loop over the ps */
+                        df = 1.0 / search->periods[ip] - search->fold.p1;
+
+                        /* Compute the phase offsets for each subintegration */
+                        for (ii = 0; ii < search->npart; ii++)
+                            delays[ii] = (pd_delays[ii] +
+                                        df * parttimes[ii]) * search->proflen;
+
+                        /* Combine the profiles usingthe above computed delays */
+                        combine_profs(ddprofs, ddstats, search->npart, search->proflen,
+                                    delays, currentprof, &currentstats);
+                        ppdot2d[ipd * search->numperiods + ip] =
+                            currentstats.redchi * chifact;
+                    }
                 }
             }
+
         }
 
         {                       /* Create the p vs chi and pd vs chi plots */
 
             periodchi = gen_fvect(search->numperiods);
-            for (ii = 0; ii < search->numperiods; ii++)
-                periodchi[ii] = ppdot2d[bestipd * search->numperiods + ii];
             pdotchi = gen_fvect(search->numpdots);
-            for (ii = 0; ii < search->numperiods; ii++)
-                pdotchi[ii] = ppdot2d[ii * search->numperiods + bestip];
+
+            if(!cudaP)
+            {
+                for (ii = 0; ii < search->numperiods; ii++)
+                    periodchi[ii] = ppdot2d[bestipd * search->numperiods + ii];
+                for (ii = 0; ii < search->numperiods; ii++)
+                    pdotchi[ii] = ppdot2d[ii * search->numperiods + bestip];
+            }
+            
         }
 
         if (search->nsub > 1) { /* For data with subbands */
@@ -582,25 +640,57 @@ void prepfold_plot(prepfoldinfo * search, plotflags * flags, int xwin, float *pp
                 vect_free(subbanddelays);
 
                 /* Fold each subband */
-                for (ii = 0; ii < search->nsub; ii++) {
+                // if(cudaP)
+                // {
+                //     double *delays_gpu;
+                //     double *dmdelays_gpu;
+                //     double *search_rawfolds_gpu = search->rawfolds_gpu;
+                //     float *currentstats_redchi;
 
-                    /* Create a temporary array filled with just the current subbands profiles */
-                    for (jj = 0; jj < search->npart; jj++) {
-                        memcpy(tmpprofs + jj * search->proflen,
-                               search->rawfolds +
-                               search->proflen * (jj * search->nsub + ii),
-                               sizeof(double) * search->proflen);
-                        totdelays[jj] = delays[jj] + dmdelays[ii];
+                //     cudaMalloc((void**)&delays_gpu, sizeof(double)* search->npart);
+                //     cudaMalloc((void**)&dmdelays, sizeof(double)* search->nsub);
+                //     cudaMalloc((void**)&currentstats_redchi, sizeof(float) * search->proflen * search->nsub);
+
+                //     cudaMemcpy(delays_gpu, delays, sizeof(double)*search->npart, cudaMemcpyHostToDevice);
+                //     cudaMemcpy(dmdelays_gpu, dmdelays, sizeof(double)*search->nsub, cudaMemcpyHostToDevice);
+
+                //     double outstats_prof_avg = 0.0;
+                //     double outstats_prof_var = 0.0;
+                //     for (ii = 0; ii < search->npart; ii++)
+                //     {
+                //         outstats_prof_avg += ddstats[ii].prof_avg;
+                //         outstats_prof_var += ddstats[ii].prof_var;
+                //     }
+
+                //     combine_profs_3_gpu_Do();
+
+                //     cudaFree(delays_gpu);
+                //     cudaFree(dmdelays_gpu);
+                //     cudaFree(currentstats_redchi);
+                // }
+                // else
+                // if(!cudaP)
+                {
+                     for (ii = 0; ii < search->nsub; ii++) {
+                        /* Create a temporary array filled with just the current subbands profiles */
+                        for (jj = 0; jj < search->npart; jj++) {
+                            memcpy(tmpprofs + jj * search->proflen,
+                                search->rawfolds +
+                                search->proflen * (jj * search->nsub + ii),
+                                sizeof(double) * search->proflen);
+                            totdelays[jj] = delays[jj] + dmdelays[ii];
+                        }
+
+                        /* Create the profile */
+                        /* Note that the stats will be incorrect in the following... */
+                        combine_profs(tmpprofs, ddstats, search->npart,
+                                    search->proflen, totdelays, currentprof,
+                                    &currentstats);
+                        double2float(currentprof, dmprofs + ii * search->proflen,
+                                    search->proflen);
                     }
-
-                    /* Create the profile */
-                    /* Note that the stats will be incorrect in the following... */
-                    combine_profs(tmpprofs, ddstats, search->npart,
-                                  search->proflen, totdelays, currentprof,
-                                  &currentstats);
-                    double2float(currentprof, dmprofs + ii * search->proflen,
-                                 search->proflen);
                 }
+
                 vect_free(totdelays);
                 vect_free(tmpprofs);
                 vect_free(dmdelays);
@@ -1018,7 +1108,13 @@ void prepfold_plot(prepfoldinfo * search, plotflags * flags, int xwin, float *pp
                 ftmparr1 = gen_fvect(search->numperiods);
                 for (ii = 0; ii < search->numperiods; ii++)
                     ftmparr1[ii] = (search->periods[ii] - pfold) * 1000.0;
-                find_min_max_arr(search->numperiods, periodchi, &min, &max);
+                if(!cudaP)
+                    find_min_max_arr(search->numperiods, periodchi, &min, &max);
+                else
+                {
+                    min = 0.0f;
+                    max = 1.0f;
+                }
                 if (search->nsub > 1) {
                     cpgsvp(0.74, 0.94, 0.41, 0.51);
                     cpgswin(x1l, x1h, 0.0, 1.1 * max);
@@ -1046,7 +1142,13 @@ void prepfold_plot(prepfoldinfo * search, plotflags * flags, int xwin, float *pp
                 ftmparr1 = gen_fvect(search->numpdots);
                 for (ii = 0; ii < search->numpdots; ii++)
                     ftmparr1[ii] = search->pdots[ii] - pdfold;
-                find_min_max_arr(search->numpdots, pdotchi, &min, &max);
+                if(!cudaP)
+                    find_min_max_arr(search->numpdots, pdotchi, &min, &max);
+                else
+                {
+                    min = 0.0f;
+                    max = 0.0f;
+                }
                 if (search->nsub > 1) {
                     cpgsvp(0.74, 0.94, 0.58, 0.68);
                     cpgswin(y1l, y1h, 0.0, 1.1 * max);
@@ -1284,20 +1386,20 @@ void prepfold_plot(prepfoldinfo * search, plotflags * flags, int xwin, float *pp
             }
         }
         cpgclos();
-        if (ct == 0) {
-            // Attempt to change the .ps into a nice .png using latex2html...
-            int retval = 0;
-            char *command = (char *) malloc(2 * strlen(search->pgdev) + 60);
-            sprintf(command, "pstoimg -density 200 -antialias -flip cw "
-                    "-quiet -type png -out %.*s.png %.*s",
-                    (int) strlen(search->pgdev) - 7, search->pgdev,
-                    (int) strlen(search->pgdev) - 4, search->pgdev);
-            if ((retval = system(command))) {
-                perror("Error running pstoimg in prepfold_plot()");
-                printf("\n");
-            }
-            free(command);
-        }
+        // if (ct == 0) {
+        //     // Attempt to change the .ps into a nice .png using latex2html...
+        //     int retval = 0;
+        //     char *command = (char *) malloc(2 * strlen(search->pgdev) + 60);
+        //     sprintf(command, "pstoimg -density 200 -antialias -flip cw "
+        //             "-quiet -type png -out %.*s.png %.*s",
+        //             (int) strlen(search->pgdev) - 7, search->pgdev,
+        //             (int) strlen(search->pgdev) - 4, search->pgdev);
+        //     if ((retval = system(command))) {
+        //         perror("Error running pstoimg in prepfold_plot()");
+        //         printf("\n");
+        //     }
+        //     free(command);
+        // }
     }
     vect_free(bestprof);
     vect_free(timeprofs);
@@ -1305,7 +1407,7 @@ void prepfold_plot(prepfoldinfo * search, plotflags * flags, int xwin, float *pp
     vect_free(timechi);
     vect_free(periodchi);
     vect_free(pdotchi);
-    if (ppdot == NULL)
+    if (ppdot == NULL && !cudaP)
         vect_free(ppdot2d);
     if (search->nsub > 1) {
         vect_free(dmprofs);

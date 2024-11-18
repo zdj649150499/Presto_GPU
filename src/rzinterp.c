@@ -157,7 +157,8 @@ void rz_interp(fcomplex * data, int numdata, double r, double z,
 {
     float *dataptr, *respptr;
     int ii, numkern, nsum, intfreq, lodata, hidata, loresp, hiresp;
-    double fracfreq, dintfreq, tmpd, tmpr;
+    double fracfreq, dintfreq;
+    static float tmpd1, tmpr1, tmpd2, tmpr2;
     fcomplex *response;
 
     /* Check 'r' and return 0.0 + 0.0i if out of bounds.        */
@@ -222,14 +223,29 @@ void rz_interp(fcomplex * data, int numdata, double r, double z,
     ans->r = 0.0;
     ans->i = 0.0;
 
-    for (ii = 0; ii < nsum; ii++) {
-        tmpd = *(dataptr++);
-        tmpr = *(respptr++);
-        ans->r += tmpd * tmpr + (*dataptr) * (*respptr);
-        ans->i += (*dataptr) * tmpr - (*respptr) * tmpd;
-        dataptr++;
-        respptr++;
-    }
+    // for (ii = 0; ii < nsum; ii++) {
+    //     tmpd = *(dataptr++);
+    //     tmpr = *(respptr++);
+    //     ans->r += tmpd * tmpr + (*dataptr) * (*respptr);
+    //     ans->i += (*dataptr) * tmpr - (*respptr) * tmpd;
+    //     dataptr++;
+    //     respptr++;
+    // }
+
+    for (ii = 0; ii < nsum; ii += 2) {  
+        tmpd1 = *(dataptr++); 
+        tmpr1 = *(respptr++);  
+        if (ii + 1 < nsum) { 
+            tmpd2 = *(dataptr++);  
+            tmpr2 = *(respptr++); 
+ 
+            ans->r += tmpd1 * tmpr1 + tmpd2 * tmpr2;  
+            ans->i += tmpd2 * tmpr1 - tmpr2 * tmpd1;  
+
+            // dataptr++;  
+            // respptr++;  
+        }  
+    }  
 
     vect_free(response);
     return;

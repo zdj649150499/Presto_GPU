@@ -251,6 +251,11 @@ typedef struct s_Cmdline {
   char offsetP;
   double offset;
   int offsetC;
+  /***** -cache: Read/Write data from cache */
+  char cacheP;
+  /**** -notjustpfd : Also write .pfd.ps and .pfd.bestprof files */
+  char notjustpfdP;
+  
   /***** uninterpreted command line parameters */
   int argc;
   /*@null*/char **argv;

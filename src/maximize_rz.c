@@ -26,7 +26,7 @@ double max_rz_arr(fcomplex * data, long numdata, double rin, double zin,
 /* Return the Fourier frequency and Fourier f-dot that      */
 /* maximizes the power.                                     */
 {
-    double y[3], x[3][2], step = 0.4;
+    static double y[3], x[3][2], step = 0.4;
     float locpow = 0.0;
     int numeval = 0, numharm = 1, max_kernhw;
 

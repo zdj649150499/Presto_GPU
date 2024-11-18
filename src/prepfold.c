@@ -10,6 +10,8 @@
 
 #include "cuda.cuh"
 
+#include <time.h>  
+
 // Use OpenMP
 #ifdef _OPENMP
 #include <omp.h>
@@ -35,6 +37,12 @@ extern void Endup_GPU();
 
 int main(int argc, char *argv[])
 {
+    // struct timeval start_time, end_time;
+    // double elapsedTime;  
+    // // 获取开始时间  
+    // gettimeofday(&start_time, NULL);  
+
+
     FILE *filemarker;
     float *data = NULL, *ppdot = NULL;
     double f = 0.0, fd = 0.0, fdd = 0.0, foldf = 0.0, foldfd = 0.0, foldfdd = 0.0;
@@ -60,6 +68,13 @@ int main(int argc, char *argv[])
     Cmdline *cmd;
     plotflags pflags;
     mask obsmask;
+
+    
+    // cudaStream_t stream_1;// stream_2;  
+
+    double ttim, utim, stim, tott;
+    struct tms runtimes;
+    tott = times(&runtimes) / (double) CLK_TCK;
 
     /* Call usage() if we have no command line arguments */
 
@@ -105,6 +120,9 @@ int main(int argc, char *argv[])
     if(cmd->cudaP == 1)
     {
         select_cuda_dev(cmd->cuda);
+
+        // cudaStreamCreate(&stream_1); 
+        // cudaStreamCreate(&stream_2); 
     }
 
 
@@ -1137,7 +1155,7 @@ int main(int argc, char *argv[])
         /* Move to the correct starting record */
 
         // if(!cmd->cudaP)
-            data = gen_fvect(cmd->nsub * worklen);
+        data = gen_fvect(cmd->nsub * worklen);
         // else if(cmd->cudaP && RAWDATA)
             // cudaMalloc((void**)&data, sizeof(float)*cmd->nsub * worklen);
 
@@ -1295,13 +1313,170 @@ int main(int argc, char *argv[])
         printf("\nStarting work on '%s'...\n\n", search.filenm);
         proftime = worklen * search.dt;
         parttimes = gen_dvect(cmd->npart);
-        printf("  Folded %lld points of %.0f", totnumfolded, N);
+        // printf("  Folded %lld points of %.0f", totnumfolded, N);
+        
+
+        /* Open cache file for write */
+        if(cmd->cacheP)
+        {
+            strcpy(s.cacheFileName, s.filenames[0]);
+            if(s.remove_zerodm)
+                strcat(s.cacheFileName, "_cac0");
+            else
+                strcat(s.cacheFileName, "_cac");
+            printf("\n*** --- >>> Read cache file %s ...\n", s.cacheFileName);
+            s.cacheFile = fopen(s.cacheFileName, "r");
+        }
+
+        printf("  Folded %.2f%%", totnumfolded/N*100.0f);
 
         /* sub-integrations in time  */
 
         dtmp = (double) cmd->npart;
 
-        if(!cmd->cudaP)
+        
+        if(cmd->cudaP && RAWDATA)
+        {
+            float *data_gpu, *data_current, *data_last;
+            double *rawfolds_gpu, *buffers_gpu, *phasesadded_gpu, *Ep_gpu, *tp_gpu;
+            // foldstats_gpu *stats_gpu;
+            int *idispdt_gpu;
+
+            cudaMalloc((void**)&data_gpu, sizeof(float)*cmd->nsub * worklen);
+            cudaMalloc((void**)&idispdt_gpu, sizeof(int)*numchan);
+            cudaMalloc((void**)&data_current, sizeof(float)*s.num_channels * s.spectra_per_subint);
+            cudaMalloc((void**)&data_last, sizeof(float)*s.num_channels * s.spectra_per_subint);
+
+            // cudaMalloc((void**)&rawfolds_gpu, sizeof(double)*cmd->nsub * search.proflen);
+            // cudaMalloc((void**)&buffers_gpu, sizeof(double)* cmd->nsub * search.proflen);
+            // cudaMalloc((void**)&phasesadded_gpu, sizeof(double)* cmd->nsub);
+            // cudaMalloc((void**)&stats_gpu, sizeof(foldstats_gpu)* cmd->nsub);
+
+            // if (binary && !cmd->eventsP){
+            //     cudaMalloc((void**)&Ep_gpu, sizeof(double)* numbinpoints);
+            //     cudaMalloc((void**)&tp_gpu, sizeof(double)* numbinpoints);
+            //     cudaMemcpy(Ep_gpu, Ep, sizeof(double)*numbinpoints, cudaMemcpyHostToDevice);
+            //     cudaMemcpy(tp_gpu, tp, sizeof(double)*numbinpoints, cudaMemcpyHostToDevice);
+            // }
+
+
+            cudaMemcpy(idispdt_gpu, idispdts, sizeof(int)*numchan, cudaMemcpyHostToDevice);
+
+            // cudaMemcpy(buffers_gpu, buffers, sizeof(double)*cmd->nsub*search.proflen, cudaMemcpyHostToDevice);
+            // cudaMemcpy(phasesadded_gpu, phasesadded, sizeof(double)*cmd->nsub, cudaMemcpyHostToDevice);
+            
+            
+            
+            int (*read_subband)() = NULL;
+
+            if(cmd->cacheP == 1)
+                read_subband = &read_subbands_GPU_cache;
+            else
+                read_subband = &read_subbands_GPU;
+            float parttimes_ii;
+            for (ii = 0; ii < cmd->npart; ii++) {
+                // cudaMemcpy(rawfolds_gpu, search.rawfolds+ii*cmd->nsub*search.proflen, sizeof(foldstats_gpu)*cmd->nsub, cudaMemcpyHostToDevice);
+                // cudaMemcpy(stats_gpu, search.stats+ii*cmd->nsub, sizeof(foldstats_gpu)*cmd->nsub, cudaMemcpyHostToDevice);
+
+                parttimes_ii = ii * reads_per_part * proftime;
+                /* reads per sub-integration */
+                for (jj = 0; jj < reads_per_part; jj++) {
+                    double fold_time0;
+                        numread = read_subband(data_gpu, data_current, data_last, idispdt_gpu, cmd->nsub, &s, 1, &padding, maskchans, &nummasked, &obsmask);
+                    
+                    if (cmd->runavgP && numread > 0)
+                    {
+                        double avg;
+                        for (kk = 0; kk < cmd->nsub; kk++) 
+                        {
+                            /* This is a quick hack to see if it will remove power drifts */
+                            // avg = get_mean_gpu(data_gpu+kk*worklen, numread);
+                            avg = gpu_sum_reduce_float(data_gpu+kk*worklen, numread);
+                            sum_value_gpu(data_gpu+kk*worklen, -avg, worklen);
+                        }
+                        // sum_value_gpu_stream(data_gpu, avg, worklen, cmd->nsub, stream_1, stream_2);
+                    }
+                    cudaMemcpy(data, data_gpu, sizeof(float)*worklen*cmd->nsub, cudaMemcpyDeviceToHost);
+
+                    
+
+                    if (cmd->polycofileP) { /* Update the period/phase */
+                        double mjdf, currentsec, currentday, offsetphase, orig_cmd_phs = 0.0;
+                        if (ii == 0 && jj == 0)
+                            orig_cmd_phs = cmd->phs;
+                        currentsec = parttimes_ii + jj * proftime;
+                        currentday = currentsec / SECPERDAY;
+                        mjdf = idata.mjd_f + startTday + currentday;
+                        /* Calculate the pulse phase at the start of the current block */
+                        polyco_index = phcalc(idata.mjd_i, mjdf, polyco_index, &polyco_phase, &foldf);
+                        if (!cmd->absphaseP)
+                            polyco_phase -= polyco_phase0;
+                        if (polyco_phase < 0.0)
+                            polyco_phase += 1.0;
+                        /* Calculate the folding frequency at the middle of the current block */
+                        polyco_index = phcalc(idata.mjd_i, mjdf + 0.5 * proftime / SECPERDAY, polyco_index, &offsetphase, &foldf);
+                        cmd->phs = orig_cmd_phs + polyco_phase;
+                        fold_time0 = 0.0;
+                    } else {
+                        fold_time0 = parttimes_ii + jj * proftime;
+                    }
+                    
+                    // cudaStreamSynchronize(stream_1);
+
+                    // fold_2_gpu(data_gpu, cmd->nsub, numread, search.dt,
+                    //         fold_time0,
+                    //         rawfolds_gpu,
+                    //         search.proflen, cmd->phs, buffers_gpu,
+                    //         phasesadded_gpu, foldf, foldfd, foldfdd, flags, Ep, tp,
+                    //         numdelays, NULL,  stats_gpu,
+                    //         !cmd->samplesP);
+                    
+                    /* Fold the frequency sub-bands */
+                    for (kk = 0; kk < cmd->nsub; kk++) {
+                        fold(data + kk * worklen, numread, search.dt,
+                            fold_time0,
+                            search.rawfolds + (ii * cmd->nsub + kk) * search.proflen,
+                            search.proflen, cmd->phs, buffers + kk * search.proflen,
+                            phasesadded + kk, foldf, foldfd, foldfdd, flags, Ep, tp,
+                            numdelays, NULL, &(search.stats[ii * cmd->nsub + kk]),
+                            !cmd->samplesP);
+                    }
+                    totnumfolded += numread;
+                }
+                // cudaMemcpy(search.rawfolds+ii*cmd->nsub*search.proflen, rawfolds_gpu, sizeof(foldstats_gpu)*cmd->nsub, cudaMemcpyDeviceToHost);
+                // cudaMemcpy(search.stats+ii*cmd->nsub, stats_gpu, sizeof(foldstats_gpu)*cmd->nsub, cudaMemcpyDeviceToHost);
+
+                // printf("\r  Folded %lld points of %.0f", totnumfolded, N);
+                printf("\r  Folded %.2f%%", totnumfolded/N*100.0f);
+                fflush(NULL);
+            }
+            cudaFree(data_gpu);
+            cudaFree(idispdt_gpu);
+
+            cudaFree(data_current);
+            cudaFree(data_last);
+            // cudaFree(rawfolds_gpu);
+            // cudaFree(buffers_gpu);
+            // cudaFree(phasesadded_gpu);
+            // if (binary && !cmd->eventsP){
+            //     cudaFree(Ep_gpu);
+            //     cudaFree(tp_gpu);
+            // }
+            // cudaFree(stats_gpu);
+
+            if(cmd->cacheP)
+            {
+                fclose(s.cacheFile);
+            }
+
+            if(cmd->cudaP == 1)
+            {
+                if(cmd->cacheP)
+                    free_prep_subband_GPU_cache_array();
+                // Endup_GPU();
+            }
+        }
+        else
         {
             for (ii = 0; ii < cmd->npart; ii++) {
             parttimes[ii] = ii * reads_per_part * proftime;
@@ -1312,8 +1487,12 @@ int main(int argc, char *argv[])
                 double fold_time0;
 
                 if (RAWDATA) {
-                    numread = read_subbands(data, idispdts, cmd->nsub, &s, 1, &padding,
-                                      maskchans, &nummasked, &obsmask);
+                    if(cmd->cacheP == 1)
+                        numread = read_subbands_cache(data, idispdts, cmd->nsub, &s, 1, &padding,
+                                      maskchans, &nummasked, &obsmask, 1, 1);
+                    else
+                        numread = read_subbands(data, idispdts, cmd->nsub, &s, 1, &padding,
+                                      maskchans, &nummasked, &obsmask, 1, 1);
                 } else if (insubs) {
                     numread = read_PRESTO_subbands(s.files, s.num_files, data, recdt,
                                                    maskchans, &nummasked, &obsmask,
@@ -1383,7 +1562,7 @@ int main(int argc, char *argv[])
                             // avg_var(data + kk * worklen, numread, &avg, &var);
 
                             int meanbkjj;
-                            avg = 0;
+                            avg = 0.0;
                             for(meanbkjj = 0; meanbkjj<numread; meanbkjj++)
                             {
                                 avg += data[kk *worklen + meanbkjj];
@@ -1400,78 +1579,15 @@ int main(int argc, char *argv[])
                             numdelays, NULL, &(search.stats[ii * cmd->nsub + kk]),
                             !cmd->samplesP);
                     }
+                    // printf("\n");
+                    // if(jj==1)
+                    //     exit(0);
                     totnumfolded += numread;
                 }
-                printf("\r  Folded %lld points of %.0f", totnumfolded, N);
+                // printf("\r  Folded %lld points of %.0f", totnumfolded, N);
+                printf("\r  Folded %.2f%%", totnumfolded/N*100.0f);
                 fflush(NULL);
             }
-        }
-        else if(cmd->cudaP && RAWDATA)
-        {
-            float *data_gpu;
-            int *idispdt_gpu;
-            cudaMalloc((void**)&data_gpu, sizeof(float)*cmd->nsub * worklen);
-            cudaMalloc((void**)&idispdt_gpu, sizeof(int)*numchan);
-            cudaMemcpy(idispdt_gpu, idispdts, sizeof(int)*numchan, cudaMemcpyHostToDevice);
-
-            for (ii = 0; ii < cmd->npart; ii++) {
-                parttimes[ii] = ii * reads_per_part * proftime;
-                /* reads per sub-integration */
-                for (jj = 0; jj < reads_per_part; jj++) {
-                    double fold_time0;
-                    numread = read_subbands_GPU(data_gpu, idispdt_gpu, cmd->nsub, &s, 1, &padding, maskchans, &nummasked, &obsmask);
-                    if (cmd->polycofileP) { /* Update the period/phase */
-                        double mjdf, currentsec, currentday, offsetphase, orig_cmd_phs = 0.0;
-                        if (ii == 0 && jj == 0)
-                            orig_cmd_phs = cmd->phs;
-                        currentsec = parttimes[ii] + jj * proftime;
-                        currentday = currentsec / SECPERDAY;
-                        mjdf = idata.mjd_f + startTday + currentday;
-                        /* Calculate the pulse phase at the start of the current block */
-                        polyco_index =
-                            phcalc(idata.mjd_i, mjdf, polyco_index, &polyco_phase,
-                                &foldf);
-                        if (!cmd->absphaseP)
-                            polyco_phase -= polyco_phase0;
-                        if (polyco_phase < 0.0)
-                            polyco_phase += 1.0;
-                        /* Calculate the folding frequency at the middle of the current block */
-                        polyco_index =
-                            phcalc(idata.mjd_i, mjdf + 0.5 * proftime / SECPERDAY,
-                                polyco_index, &offsetphase, &foldf);
-                        cmd->phs = orig_cmd_phs + polyco_phase;
-                        fold_time0 = 0.0;
-                    } else {
-                        fold_time0 = parttimes[ii] + jj * proftime;
-                    }
-                    
-                    /* Fold the frequency sub-bands */
-                    for (kk = 0; kk < cmd->nsub; kk++) {
-                        /* This is a quick hack to see if it will remove power drifts */
-                        if (cmd->runavgP && (numread > 0)) {
-                            int dataptr;
-                            double avg = 0;
-                            avg = get_mean_gpu_d(data_gpu+kk*worklen, numread);
-                            sum_value_gpu(data_gpu+kk*worklen, avg,worklen);
-                        }
-                        cudaMemcpy(data+ kk*worklen, data_gpu + kk*worklen, sizeof(float)*worklen, cudaMemcpyDeviceToHost);
-
-                        fold(data + kk * worklen, numread, search.dt,
-                            fold_time0,
-                            search.rawfolds + (ii * cmd->nsub + kk) * search.proflen,
-                            search.proflen, cmd->phs, buffers + kk * search.proflen,
-                            phasesadded + kk, foldf, foldfd, foldfdd, flags, Ep, tp,
-                            numdelays, NULL, &(search.stats[ii * cmd->nsub + kk]),
-                            !cmd->samplesP);
-                    }
-                    totnumfolded += numread;
-                }
-
-                printf("\r  Folded %lld points of %.0f", totnumfolded, N);
-                fflush(NULL);
-            }
-            cudaFree(data_gpu);
-            cudaFree(idispdt_gpu);
         }
 
         vect_free(buffers);
@@ -1663,84 +1779,269 @@ int main(int argc, char *argv[])
                        totnumtrials);
             }
 
-            for (idm = lodmnum; idm < numdmtrials; idm++) {     /* Loop over DMs */
-                if (cmd->nsub > 1) {    /* This is only for doing DM searches */
-                    if (!cmd->nodmsearchP)
-                        good_idm = idm;
-                    correct_subbands_for_DM(search.dms[idm], &search, ddprofs,
-                                            ddstats);
+            int *dmdelays_subband_int = malloc(sizeof(int)*search.nsub);
+
+            for (ii = 0; ii < search.npart; ii++) {
+                // initialize_foldstats(&(outprofstats[ii]));
+                ddstats[ii].numdata = 0.0;       /* Number of data bins folded         */
+                ddstats[ii].data_avg = 0.0;      /* Average level of the data bins     */
+                ddstats[ii].data_var = 0.0;      /* Variance of the data bins          */
+                ddstats[ii].numprof = 0.0;       /* Number of bins in the profile      */
+                ddstats[ii].prof_avg = 0.0;      /* Average level of the profile bins  */
+                ddstats[ii].prof_var = 0.0;      /* Variance of the profile bins       */
+                ddstats[ii].redchi = 0.0;        /* Reduced chi-squared of the profile */
+                ddstats[ii].numprof = search.stats[0].numprof;
+            }
+
+            for (ii = 0; ii < search.npart; ii++) { /* Step through parts */
+                int statindex = ii * search.nsub;
+                ddstats[ii].numdata += search.stats[statindex].numdata;
+                for (jj = 0; jj < search.nsub; jj++) {  /* Step through subbands */
+                    /* Update the foldstats */
+                    ddstats[ii].data_avg += search.stats[statindex + jj].data_avg;
+                    ddstats[ii].data_var += search.stats[statindex + jj].data_var;
+                    ddstats[ii].prof_avg += search.stats[statindex + jj].prof_avg;
+                    ddstats[ii].prof_var += search.stats[statindex + jj].prof_var;
+                }
+            }
+
+
+            if(cmd->cudaP && cmd->nsub > 1)
+            // if(cmd->cudaP && cmd->nsub > 1 && (!cmd->nopsearchP || !cmd->nopdsearchP) && (numtrials*numtrials)>(65*129))
+            {  
+                // loop only for cudaP, &&  RAWDAT, && nsub>1, 
+                //       && psearchP or pdsearchP, && big data of (numtrials*numtrials)>(65*129)
+
+                printf("Loop in GPU\n");
+
+                int *dmdelays_subband_int_gpu;
+                double *search_dms_gpu;
+                double *ddprofs_gpu;
+                double *search_rawfolds_gpu = search.rawfolds_gpu;
+                double *currentstats_redchi;
+                double *delays_gpu;
+                
+                int numpds, numps, numdms;
+
+                if(cmd->searchpddP)
+                    numpdds = numtrials;
+                else 
+                    numpdds = 1;
+
+                if(cmd->nopdsearchP)
+                    numpds = 1;
+                else numpds = numtrials;
+
+                if(cmd->nopsearchP)
+                    numps = 1;
+                else numps = numtrials;
+
+                if(cmd->nodmsearchP)
+                    numdms = 1;
+                else numdms = numdmtrials;
+
+
+
+                cudaMalloc((void**)&dmdelays_subband_int_gpu, sizeof(int)* numdms * search.nsub);
+                cudaMalloc((void**)&search_dms_gpu, sizeof(double)* numdms);
+                cudaMalloc((void**)&ddprofs_gpu, sizeof(double)* cmd->npart * search.proflen * numdms);
+                cudaMalloc((void**)&search_rawfolds_gpu, sizeof(double)*cmd->nsub * cmd->npart * search.proflen);
+                cudaMalloc((void**)&currentstats_redchi, sizeof(double) * numpdds * numpds * numps);
+                cudaMalloc((void**)&delays_gpu, sizeof(double) * numpdds * numpds * numps * cmd->npart);
+
+                cudaMemcpy(search_dms_gpu, search.dms+lodmnum, sizeof(double) * numdms, cudaMemcpyHostToDevice);
+                cudaMemcpy(search_rawfolds_gpu, search.rawfolds, sizeof(double) * cmd->nsub * cmd->npart * search.proflen, cudaMemcpyHostToDevice);
+                
+                /********************  Get dmdelays in GPU **************************/
+                Get_dmdelays_subband_int_gpu(search_dms_gpu, dmdelays_subband_int_gpu, numdms,
+                    search.nsub, search.fold.p1, search.proflen, search.lofreq, search.numchan,
+                    search.chan_wid, search.avgvoverc);
+                
+
+                combine_subbands_1_gpu(search_rawfolds_gpu, search.npart, search.nsub, search.proflen, numdms, dmdelays_subband_int_gpu, ddprofs_gpu);
+                
+                /********************  Get p-pd-pdd delays_gpu in GPU **************************/
+                {
+                    double *fdotdots_gpu;
+                    double *fdots_gpu;
+
+                    cudaMalloc((void**)&fdotdots_gpu, sizeof(double) * numtrials);
+                    cudaMalloc((void**)&fdots_gpu, sizeof(double) * numtrials);
+
+                    cudaMemcpy(fdotdots_gpu, fdotdots, sizeof(double) * numtrials, cudaMemcpyHostToDevice);
+                    cudaMemcpy(fdots_gpu, fdots, sizeof(double) * numtrials, cudaMemcpyHostToDevice);
+
+                    get_delays_gpu(delays_gpu, numpdds, numpds, numps, cmd->npart, numtrials, search.proflen, fdotdots_gpu, fdots_gpu, good_ipd, good_ip, cmd->searchpddP, search.pstep, reads_per_part, proftime);
+
+
+                    cudaFree(fdotdots_gpu);
+                    cudaFree(fdots_gpu);
                 }
 
-                for (ipdd = 0; ipdd < numpdds; ipdd++) {        /* Loop over pdds */
-                    if (!cmd->nosearchP)
-                        good_ipdd = ipdd;
-                    for (ii = 0; ii < cmd->npart; ii++)
-                        pdd_delays[ii] = cmd->searchpddP ?
-                            fdotdot2phasedelay(fdotdots[ipdd],
-                                               parttimes[ii]) * search.proflen : 0.0;
+                double outstats_prof_avg = 0.0;
+                double outstats_prof_var = 0.0;
 
-                    for (ipd = 0; ipd < numtrials; ipd++) {     /* Loop over the pds */
-                        if (!cmd->nopdsearchP)
-                            good_ipd = ipd;
-                        else if (cmd->nopdsearchP && cmd->nsub > 1
-                                 && ipd != good_ipd)
-                            continue;
+                for (ii = 0; ii < cmd->npart; ii++)
+                {
+                    outstats_prof_avg += ddstats[ii].prof_avg;
+                    outstats_prof_var += ddstats[ii].prof_var;
+                }
+                
+
+                int *max_redchi_index_array = malloc(sizeof(int)*numdms);
+                double *max_redchi_index_Value = malloc(sizeof(double)*numdms);
+
+                // cudaStreamSynchronize(stream_1);
+                
+
+                /********************  Loop for each DM and find max redchi in GPU **************************/
+                for (idm = 0; idm < numdms; idm++) {
+                    combine_profs_1_gpu(ddprofs_gpu + idm*cmd->npart*search.proflen, delays_gpu, cmd->npart, search.proflen, numpdds, numpds, numps, outstats_prof_avg, outstats_prof_var, currentstats_redchi);
+                    get_maxindex_double_gpu(currentstats_redchi, numpdds * numpds * numps, &max_redchi_index_Value[idm], &max_redchi_index_array[idm]);
+                }
+                
+
+                double max_redchi_index_V = max_redchi_index_Value[0];
+                int max_redchi_index_I = max_redchi_index_array[0];
+                int max_redchi_index_I_idm = 0;
+                for (idm = 1; idm < numdms; idm++)
+                {
+                    if(max_redchi_index_V < max_redchi_index_Value[idm])
+                    {
+                        max_redchi_index_V = max_redchi_index_Value[idm];
+                        max_redchi_index_I = max_redchi_index_array[idm];
+                        max_redchi_index_I_idm = idm;
+                    }
+                }
+
+                idm = max_redchi_index_I_idm;
+                ipdd = max_redchi_index_I/(numpds * numps);
+                ipd = (max_redchi_index_I  - ipdd*numpds*numps)/numps;
+                ip = max_redchi_index_I - ipdd*numpds*numps - ipd*numps;
+
+                
+                cudaMemcpy(ddprofs, ddprofs_gpu + idm*cmd->npart*search.proflen, sizeof(double) * cmd->npart * search.proflen, cudaMemcpyDeviceToHost);
+                cudaMemcpy(delays, delays_gpu + ipdd*numpds*numps*cmd->npart + ipd*numps*cmd->npart + ip*cmd->npart, sizeof(double) * cmd->npart, cudaMemcpyDeviceToHost);
+
+                // cudaStreamSynchronize(stream_1);
+
+                combine_profs_1(ddprofs, ddstats, cmd->npart, search.proflen, delays, bestprof, &currentstats);
+
+                
+                if(cmd->nodmsearchP)
+                    bestidm = good_idm;
+                else    bestidm = idm;
+
+                if (cmd->nosearchP && cmd->searchpddP) bestipdd = good_ipdd;
+                else bestipdd = ipdd;
+
+                if(cmd->nopdsearchP) bestipd = good_ipd;
+                else bestipd = ipd;
+
+                if(cmd->nopsearchP) bestip = good_ip;
+                else bestip = ip;
+                beststats = currentstats;
+
+                cudaFree(search_dms_gpu);
+                cudaFree(dmdelays_subband_int_gpu);
+                
+                cudaFree(currentstats_redchi);
+                
+                cudaFree(ddprofs_gpu);
+                cudaFree(delays_gpu);
+                free(max_redchi_index_array);
+                free(max_redchi_index_Value);
+
+                
+                // if(!cmd->notjustpfdP)
+                {
+                    cudaFree(search.rawfolds_gpu);
+                    Endup_GPU();
+                }
+                
+
+            }
+            else
+            {
+                if(cmd->cudaP)
+                    Endup_GPU();
+
+                printf("Loop in CPU\n");
+
+                for (idm = lodmnum; idm < numdmtrials; idm++) {     /* Loop over DMs */
+                    if (cmd->nsub > 1) {    /* This is only for doing DM searches */
+                        if (!cmd->nodmsearchP)
+                            good_idm = idm;
+                        // correct_subbands_for_DM(search.dms[idm], &search, ddprofs, ddstats);
+                        correct_subbands_for_DM_1(search.dms[idm], &search, ddprofs, dmdelays_subband_int);
+                    }
+
+                    for (ipdd = 0; ipdd < numpdds; ipdd++) {        /* Loop over pdds */
+                        if (!cmd->nosearchP)
+                            good_ipdd = ipdd;
                         for (ii = 0; ii < cmd->npart; ii++)
-                            pd_delays[ii] = pdd_delays[ii] +
-                                fdot2phasedelay(fdots[ipd],
-                                                parttimes[ii]) * search.proflen;
+                            pdd_delays[ii] = cmd->searchpddP ? fdotdot2phasedelay(fdotdots[ipdd], parttimes[ii]) * search.proflen : 0.0;
 
-                        for (ip = 0; ip < numtrials; ip++) {    /* Loop over the ps */
-                            if (!cmd->nopsearchP)
-                                good_ip = ip;
-                            else if (cmd->nopsearchP && cmd->nsub > 1
-                                     && ip != good_ip)
+                        for (ipd = 0; ipd < numtrials; ipd++) {     /* Loop over the pds */
+                            if (!cmd->nopdsearchP)
+                                good_ipd = ipd;
+                            else if (cmd->nopdsearchP && cmd->nsub > 1 && ipd != good_ipd)
                                 continue;
-                            totpdelay = search.pstep * (ip - (numtrials - 1) / 2);
                             for (ii = 0; ii < cmd->npart; ii++)
-                                delays[ii] =
-                                    pd_delays[ii] +
-                                    (double) (ii * totpdelay) / cmd->npart;
+                                pd_delays[ii] = pdd_delays[ii] + fdot2phasedelay(fdots[ipd], parttimes[ii]) * search.proflen;
 
-                            /* Combine the profiles usingthe above computed delays */
-                            combine_profs(ddprofs, ddstats, cmd->npart,
-                                          search.proflen, delays, currentprof,
-                                          &currentstats);
+                            for (ip = 0; ip < numtrials; ip++) {    /* Loop over the ps */
+                                if (!cmd->nopsearchP)
+                                    good_ip = ip;
+                                else if (cmd->nopsearchP && cmd->nsub > 1 && ip != good_ip)
+                                    continue;
+                                totpdelay = search.pstep * (ip - (numtrials - 1) / 2);
+                                for (ii = 0; ii < cmd->npart; ii++)
+                                    delays[ii] = pd_delays[ii] + (double) (ii * totpdelay) / cmd->npart;
 
-                            /* If this is a simple fold, create the chi-square p-pdot plane */
-                            if (cmd->nsub == 1 && !cmd->searchpddP)
-                                ppdot[ipd * search.numpdots + ip] =
-                                    currentstats.redchi;
+                                /* Combine the profiles usingthe above computed delays */
+                                // combine_profs(ddprofs, ddstats, cmd->npart,
+                                //               search.proflen, delays, currentprof,
+                                //               &currentstats);
+                                combine_profs_1(ddprofs, ddstats, cmd->npart,
+                                            search.proflen, delays, currentprof,
+                                            &currentstats);
 
-                            /* If this is the best profile or if it is the specific */
-                            /* profile that we are looking for, save it.            */
-                            if (idm == good_idm && ipdd == good_ipdd
-                                && ipd == good_ipd && ip == good_ip) {
-                                if (cmd->nosearchP
-                                    || (currentstats.redchi > beststats.redchi
-                                        && !cmd->nosearchP)) {
-                                    bestidm = idm;
-                                    bestipdd = ipdd;
-                                    bestipd = ipd;
-                                    bestip = ip;
-                                    beststats = currentstats;
-                                    memcpy(bestprof, currentprof,
-                                           sizeof(double) * search.proflen);
+                                /* If this is a simple fold, create the chi-square p-pdot plane */
+                                if (cmd->nsub == 1 && !cmd->searchpddP)
+                                    ppdot[ipd * search.numpdots + ip] = currentstats.redchi;
+
+                                /* If this is the best profile or if it is the specific */
+                                /* profile that we are looking for, save it.            */
+                                if (idm == good_idm && ipdd == good_ipdd
+                                    && ipd == good_ipd && ip == good_ip) {
+                                    if (cmd->nosearchP || (currentstats.redchi > beststats.redchi && !cmd->nosearchP)) {
+                                        bestidm = idm;
+                                        bestipdd = ipdd;
+                                        bestipd = ipd;
+                                        bestip = ip;
+                                        beststats = currentstats;
+                                        memcpy(bestprof, currentprof, sizeof(double) * search.proflen);
+                                    }
                                 }
-                            }
-                            currtrial += 1;
-                            newper =
-                                (int) (((double) currtrial) / totnumtrials * 100.0 +
-                                       0.5);
-                            if (newper > oldper) {
-                                printf("\r  Amount Complete = %3d%%", newper);
-                                fflush(stdout);
-                                oldper = newper;
+                                currtrial += 1;
+                                newper =
+                                    (int) (((double) currtrial) / totnumtrials * 100.0 +
+                                        0.5);
+                                if (newper > oldper) {
+                                    printf("\r  Amount Complete = %3d%%", newper);
+                                    fflush(stdout);
+                                    oldper = newper;
+                                }
                             }
                         }
                     }
                 }
             }
+            
+            // free(subbanddelays);
+            free(dmdelays_subband_int);
+            // free(local_delays);
 
             /* Convert the indices of the folds into p, pd, pdd and DM values */
             if (cmd->nsub > 1)
@@ -1774,6 +2075,8 @@ int main(int argc, char *argv[])
         vect_free(fdotdots);
     }
     printf("  Done searching.\n\n");
+
+    
 
     /* Write and plot the results and cleanup */
 
@@ -1902,14 +2205,14 @@ int main(int argc, char *argv[])
     /*
      *   Write the raw prepfoldinfo structure
      */
-
     write_prepfoldinfo(&search, outfilenm);
 
     /*
      *   Plot our results
      */
-
-    prepfold_plot(&search, &pflags, !cmd->noxwinP, ppdot);
+    
+    if(cmd->notjustpfdP)
+        prepfold_plot(&search, &pflags, !cmd->noxwinP, ppdot, cmd->cudaP);
 
     /* Free our memory  */
 
@@ -1917,10 +2220,7 @@ int main(int argc, char *argv[])
         vect_free(ppdot);
     delete_prepfoldinfo(&search);
 
-    // if(!cmd->cudaP)
-        vect_free(data);
-    // else if(cmd->cudaP && RAWDATA)
-        // cudaFree(data);
+    vect_free(data);
 
     if (!cmd->outfileP)
         free(rootnm);
@@ -1942,12 +2242,35 @@ int main(int argc, char *argv[])
         vect_free(obsf);
         vect_free(idispdts);
     }
+
+    // if(cmd->cudaP == 1 && cmd->nsub > 1 && cmd->notjustpfdP)
+    // {
+    //     // cudaStreamDestroy(stream_1);
+    //     // cudaStreamDestroy(stream_2);
+        
+    //     cudaFree(search.rawfolds_gpu);
+    //     Endup_GPU();
+    // }
+
+
     printf("Done.\n\n");
 
-    if(cmd->cudaP == 1)
-    {
-        Endup_GPU();
-    }
+
+    // // 获取结束时间  
+    // gettimeofday(&end_time, NULL); 
+    // // 计算并打印执行时间（单位为秒）  
+    // elapsedTime = (end_time.tv_sec - start_time.tv_sec) * 1000.0;      // sec to ms  
+    // elapsedTime += (end_time.tv_usec - start_time.tv_usec) / 1000.0;   // us to ms  
+    // printf("Runing time: %f ms\n", elapsedTime);  
+
+    printf("\nTiming summary:\n");
+    tott = times(&runtimes) / (double) CLK_TCK - tott;
+    utim = runtimes.tms_utime / (double) CLK_TCK;
+    stim = runtimes.tms_stime / (double) CLK_TCK;
+    ttim = utim + stim;
+    printf("    CPU time: %.3f sec (User: %.3f sec, System: %.3f sec)\n",
+           ttim, utim, stim);
+    printf("  Total time: %.3f sec\n\n", tott);
 
     return (0);
 }

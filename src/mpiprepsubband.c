@@ -1002,7 +1002,10 @@ static int get_data(float **outdata, int blocksperread,
                         numread =
                             prep_subbands(currentdata + ii * blocksize,
                                           frawdata, idispdts, cmd->nsub, s,
-                                          0, maskchans, &nummasked, obsmask);
+                                          0, maskchans, &nummasked, obsmask, 1, 1);
+                            // prep_subbands(currentdata,
+                            //               frawdata, idispdts, cmd->nsub, s,
+                            //               0, maskchans, &nummasked, obsmask, blocksperread, ii+1);
                         if (!firsttime)
                             totnumread += numread;
                     } else {
@@ -1064,7 +1067,7 @@ static int get_data(float **outdata, int blocksperread,
     if (myid > 0) {
         for (ii = 0; ii < local_numdms; ii++)
             float_dedisp(currentdsdata, lastdsdata, dsworklen,
-                         cmd->nsub, offsets[ii], 0.0, outdata[ii]);
+                         cmd->nsub, offsets[ii], 0.0, outdata[ii], 0);
     }
     SWAP(currentdata, lastdata);
     SWAP(currentdsdata, lastdsdata);

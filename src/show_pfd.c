@@ -133,7 +133,7 @@ int main(int argc, char *argv[])
      *   Plot our results
      */
 
-    prepfold_plot(&search, &flags, !cmd->noxwinP, NULL);
+    prepfold_plot(&search, &flags, !cmd->noxwinP, NULL, 0);
 
     /* Free our memory  */
 

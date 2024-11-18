@@ -1,5 +1,69 @@
 # PRESTO
 
+Presto_GPU_v2.0
+
+Update `rfifind`, `prepsubband`, `accensearch`, `prepfold`.
+
+Add a new software : `prepcache`
+
+For searching pulsar with this Presto, you can use the following command:
+
+1: `rfifind`
+
+```shell
+$ rfifind -time aaa -o bbb bbb.fits
+```
+
+2: `prepcache` (up-to you)
+
+```shell
+$ prepcache -ncpus 16 -o bbb -mask bbb_rfifind.mask bbb.fits
+# or de-zerodm
+$ prepcache -zerodm -ncpus 16 -o bbb -mask bbb_rfifind.mask bbb.fits
+
+# These two steps will generate two cache files, which can be used later for prepsubband and prepfold, greatly speeding up the processing speed.
+```
+
+3: `prepsubband` 
+
+```shell
+# If you used the prepcache before:
+$ prepsubband -cache -cuda 0 -nsub 64 -lodm 5 -numdms 100 -dmstep 1 -downsamp 1 -numout 1000000 -mask bbb_rfifind.mask -o bbb bbb.fits
+# or de-zerodm
+$ prepsubband -zerodm -cache -cuda 0 -nsub 64 -lodm 5 -numdms 100 -dmstep 1 -downsamp 1 -numout 1000000 -mask bbb_rfifind.mask -o bbb bbb.fits
+
+# If you do not used the prepcache before:
+$ prepsubband -cuda 0 -nsub 64 -lodm 5 -numdms 100 -dmstep 1 -downsamp 1 -numout 1000000 -mask bbb_rfifind.mask -o bbb bbb.fits
+# or de-zerodm
+$ prepsubband -zerodm -cuda 0 -nsub 64 -lodm 5 -numdms 100 -dmstep 1 -downsamp 1 -numout 1000000 -mask bbb_rfifind.mask -o bbb bbb.fits
+
+```
+
+4: `accelsearch` 
+
+```shell
+$ accelsearch -cuda 0 -numharm 32 -zmax 200 cccccc.dat
+```
+
+5: `prepfold`
+
+```shell
+# If you used the prepcache before:
+$ prepfold -cache -cuda 0 -accelcand 1 -accelfile cccccc_ACCEL_0.cand -dm 211.7 -mask bbb_rfifind.mask -o ccccc bbb.fits
+# If you do not used the prepcache before:
+$ prepfold -cuda 0 -accelcand 1 -accelfile cccccc_ACCEL_0.cand -dm 211.7 -mask bbb_rfifind.mask -o ccccc bbb.fits
+
+# This version of prepfold only generates '****.pfd' files by default. To input other related files normally, add the '-notjustpfd' option.
+```
+
+
+
+
+
+------
+
+
+
 This is a GPU version of PRESTO that created by DeJiang Zhou at NAOC.
 
 In this version, `prepsubband` and `accelsearch` can work with the option `-cuda` on a GPU device.

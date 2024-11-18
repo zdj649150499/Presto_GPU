@@ -264,6 +264,10 @@ static Cmdline cmd = {
   /* offsetP = */ 1,
   /* offset = */ 0,
   /* offsetC = */ 1,
+  /***** -cache: Read/Write data from cache */
+  /* cacheP = */ 0,
+  /**** -notjustpfd : Also write .pfd.ps and .pfd.bestprof files */
+  /* notjustpfdP = */ 0,
   /***** uninterpreted rest of command line */
   /* argc = */ 0,
   /* argv = */ (char**)0,
@@ -1726,6 +1730,21 @@ showOptionValues(void)
       printf("  value = `%.40g'\n", cmd.offset);
     }
   }
+
+  /***** -cache: Read/Write data from cache */
+  if( !cmd.cacheP ) {
+    printf("-cache not found.\n");
+  } else {
+    printf("-cache found:\n");
+  }
+
+  /**** -notjustpfd : Also write .pfd.ps and .pfd.bestprof files */
+  if( !cmd.notjustpfdP ) {
+    printf("-notjustpfd not found.\n");
+  } else {
+    printf("-notjustpfd found:\n");
+  }
+
   if( !cmd.argc ) {
     printf("no remaining parameters in argv\n");
   } else {
@@ -1741,7 +1760,7 @@ showOptionValues(void)
 void
 usage(void)
 {
-  fprintf(stderr,"%s","   [-ncpus ncpus] [-o outfile] [-filterbank] [-psrfits] [-noweights] [-noscales] [-nooffsets] [-wapp] [-window] [-topo] [-invert] [-zerodm] [-absphase] [-barypolycos] [-debug] [-samples] [-numwapps numwapps] [-if ifs] [-clip clip] [-noclip] [-noxwin] [-runavg] [-fine] [-coarse] [-slow] [-searchpdd] [-searchfdd] [-nosearch] [-nopsearch] [-nopdsearch] [-nodmsearch] [-scaleparts] [-allgrey] [-fixchi] [-justprofs] [-dm dm] [-n proflen] [-nsub nsub] [-npart npart] [-pstep pstep] [-pdstep pdstep] [-dmstep dmstep] [-npfact npfact] [-ndmfact ndmfact] [-p p] [-pd pd] [-pdd pdd] [-f f] [-fd fd] [-fdd fdd] [-pfact pfact] [-ffact ffact] [-phs phs] [-start startT] [-end endT] [-psr psrname] [-par parname] [-polycos polycofile] [-timing timing] [-rzwcand rzwcand] [-rzwfile rzwfile] [-accelcand accelcand] [-accelfile accelfile] [-bin] [-pb pb] [-x asinic] [-e e] [-To To] [-w w] [-wdot wdot] [-mask maskfile] [-ignorechan ignorechanstr] [-events] [-days] [-mjds] [-double] [-offset offset] [--] infile ...\n");
+  fprintf(stderr,"%s","   [-ncpus ncpus] [-o outfile] [-filterbank] [-psrfits] [-noweights] [-noscales] [-nooffsets] [-wapp] [-window] [-topo] [-invert] [-zerodm] [-absphase] [-barypolycos] [-debug] [-samples] [-numwapps numwapps] [-if ifs] [-clip clip] [-noclip] [-noxwin] [-runavg] [-fine] [-coarse] [-slow] [-searchpdd] [-searchfdd] [-nosearch] [-nopsearch] [-nopdsearch] [-nodmsearch] [-scaleparts] [-allgrey] [-fixchi] [-justprofs] [-dm dm] [-n proflen] [-nsub nsub] [-npart npart] [-pstep pstep] [-pdstep pdstep] [-dmstep dmstep] [-npfact npfact] [-ndmfact ndmfact] [-p p] [-pd pd] [-pdd pdd] [-f f] [-fd fd] [-fdd fdd] [-pfact pfact] [-ffact ffact] [-phs phs] [-start startT] [-end endT] [-psr psrname] [-par parname] [-polycos polycofile] [-timing timing] [-rzwcand rzwcand] [-rzwfile rzwfile] [-accelcand accelcand] [-accelfile accelfile] [-bin] [-pb pb] [-x asinic] [-e e] [-To To] [-w w] [-wdot wdot] [-mask maskfile] [-ignorechan ignorechanstr] [-events] [-days] [-mjds] [-double] [-offset offset] [-cache] [-notjustpfd] [--] infile ...\n");
   fprintf(stderr,"%s","      Prepares (if required) and folds raw radio data, standard time series, or events.\n");
   fprintf(stderr,"%s","          -ncpus: Number of processors to use with OpenMP\n");
   fprintf(stderr,"%s","                  1 int value between 1 and oo\n");
@@ -1887,6 +1906,9 @@ usage(void)
   fprintf(stderr,"%s","         -offset: A time offset to add to the 1st event in the same units as the events\n");
   fprintf(stderr,"%s","                  1 double value\n");
   fprintf(stderr,"%s","                  default: `0'\n");
+  fprintf(stderr,"%s","          -cache: Read/Write data from/to cache file (read for 'prepsubband' and 'prepfold', write for 'prepcache')\n");
+  fprintf(stderr,"%s","                  default: not do this ('***filename_cac' or '***fileneme_cac0' for 0DM)\n");
+  fprintf(stderr,"%s","     -notjustpfd: Not just write .pfd file, but also write .pfd.ps and .pfd.bestprof files\n");
   fprintf(stderr,"%s","          infile: Input data file name.  If the data is not in a regognized raw data format, it should be a file containing a time series of single-precision floats or short ints.  In this case a '.inf' file with the same root filename must also exist (Note that this means that the input data file must have a suffix that starts with a period)\n");
   fprintf(stderr,"%s","                  1...16384 values\n");
   fprintf(stderr,"%s","  version: 25Oct20\n");
@@ -1922,7 +1944,7 @@ parseCmdline(int argc, char **argv)
       i = getIntOpt(argc, argv, i, &cmd.cuda, 1);
       cmd.cudaC = i-keep;
       // checkIntHigher("-ncpus", &cmd.ncpus, cmd.ncpusC, 1);
-      checkIntLower("-cuda", &cmd.cuda, cmd.cudaC, 0);
+      checkIntLower("-cuda", &cmd.cuda, cmd.cudaC, 128);
       continue;
     }
 
@@ -2468,6 +2490,16 @@ parseCmdline(int argc, char **argv)
       cmd.offsetP = 1;
       i = getDoubleOpt(argc, argv, i, &cmd.offset, 1);
       cmd.offsetC = i-keep;
+      continue;
+    }
+
+    if( 0==strcmp("-cache", argv[i]) ) {
+      cmd.cacheP = 1;
+      continue;
+    }
+
+    if( 0==strcmp("-notjustpfd", argv[i]) ) {
+      cmd.notjustpfdP = 1;
       continue;
     }
 

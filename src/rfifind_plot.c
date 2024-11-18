@@ -225,6 +225,125 @@ void rfifind_plot(int numchan, int numint, int ptsperint,
         }
     }
 
+
+    /**  De-base added by DJZ **/
+    {
+
+        float *avg_int_std_bk, *std_int_std_bk;
+        float *avg_chan_std_bk, *std_chan_std_bk;
+        float *avg_int_avg_bk, *std_int_avg_bk;
+        float *avg_int_med_bk, *std_int_med_bk;
+        float *avg_chan_avg_bk, *std_chan_avg_bk;
+        float *avg_chan_med_bk, *std_chan_med_bk;
+
+        float **dataavg_bk = gen_fmatrix(numint, numchan);
+        float **datastd_bk = gen_fmatrix(numint, numchan);
+
+        avg_chan_std_bk = gen_fvect(numchan);
+        std_chan_std_bk = gen_fvect(numchan);
+        avg_int_std_bk = gen_fvect(numint);
+        std_int_std_bk = gen_fvect(numint);
+        avg_int_avg_bk = gen_fvect(numint);
+        std_int_avg_bk = gen_fvect(numint);
+        avg_int_med_bk = gen_fvect(numint);
+        std_int_med_bk = gen_fvect(numint);
+        avg_chan_avg_bk = gen_fvect(numchan);
+        std_chan_avg_bk = gen_fvect(numchan);
+        avg_chan_med_bk = gen_fvect(numchan);
+        std_chan_med_bk = gen_fvect(numchan);
+
+
+        float dataavg_avg_bk, datastd_avg_bk;
+        float dataavg_med_bk, datastd_med_bk;
+        float dataavg_std_bk, datastd_std_bk;
+        float avg_reject_bk, std_reject_bk;
+
+
+        for (ii = 0; ii < numint; ii++) {
+                for (jj = 0; jj < numchan; jj++) {
+                    dataavg_bk[ii][jj] = dataavg[ii][jj] - avg_chan_med[jj];
+                    datastd_bk[ii][jj] = datastd[ii][jj] - std_chan_med[jj];
+                }
+        }
+
+        calc_avgmedstd(dataavg_bk[0], ct, 0.8, 1, &dataavg_avg_bk, &dataavg_med_bk, &dataavg_std_bk);
+        calc_avgmedstd(datastd_bk[0], ct, 0.8, 1, &datastd_avg_bk, &datastd_med_bk, &datastd_std_bk);
+        avg_reject_bk = timesigma * dataavg_std_bk;
+        std_reject_bk = timesigma * datastd_std_bk;
+
+        for (ii = 0; ii < numint; ii++) {
+            calc_avgmedstd(dataavg_bk[0] + ii * numchan, numchan, 0.8, 1,
+                        avg_int_avg_bk + ii, avg_int_med_bk + ii, avg_int_std_bk + ii);
+            calc_avgmedstd(datastd_bk[0] + ii * numchan, numchan, 0.8, 1,
+                        std_int_avg_bk + ii, std_int_med_bk + ii, std_int_std_bk + ii);
+        }
+        for (ii = 0; ii < numchan; ii++) {
+            calc_avgmedstd(dataavg_bk[0] + ii, numint, 0.8, numchan,
+                        avg_chan_avg_bk + ii, avg_chan_med_bk + ii, avg_chan_std_bk + ii);
+            calc_avgmedstd(datastd_bk[0] + ii, numint, 0.8, numchan,
+                        std_chan_avg_bk + ii, std_chan_med_bk + ii, std_chan_std_bk + ii);
+        }
+
+        float int_med, chan_med;
+        for (ii = 0; ii < numint; ii++) {
+            for (jj = 0; jj < numchan; jj++) {
+                {               /* Averages */
+                    // if (fabs(avg_int_med[ii] - dataavg_med) >
+                    //     timesigma * dataavg_std)
+                    //     int_med = dataavg_med;
+                    // else
+                        int_med = avg_int_med_bk[ii];
+                    // if (fabs(avg_chan_med[jj] - dataavg_med) >
+                    //     timesigma * dataavg_std)
+                    //     chan_med = dataavg_med;
+                    // else
+                        chan_med = avg_chan_med_bk[jj];
+                    if (fabs(dataavg_bk[ii][jj] - int_med) > avg_reject_bk ||
+                        fabs(dataavg_bk[ii][jj] - chan_med) > avg_reject_bk)
+                        if (!(bytemask[ii][jj] & PADDING))
+                            bytemask[ii][jj] |= BAD_AVG;
+                }
+                {               /* Standard Deviations */
+                    // if (fabs(std_int_med[ii] - datastd_med) >
+                    //     timesigma * datastd_std)
+                    //     int_med = datastd_med;
+                    // else
+                        int_med = std_int_med_bk[ii];
+                    // if (fabs(std_chan_med[jj] - datastd_med) >
+                    //     timesigma * datastd_std)
+                    //     chan_med = datastd_med;
+                    // else
+                        chan_med = std_chan_med_bk[jj];
+                    if (fabs(datastd_bk[ii][jj] - int_med) > std_reject_bk ||
+                        fabs(datastd_bk[ii][jj] - chan_med) > std_reject_bk)
+                        if (!(bytemask[ii][jj] & PADDING))
+                            bytemask[ii][jj] |= BAD_STD;
+                }
+            }
+        }
+
+
+        vect_free(dataavg_bk[0]);
+        vect_free(dataavg_bk);
+        vect_free(datastd_bk[0]);
+        vect_free(datastd_bk);
+        vect_free(avg_chan_std_bk);
+        vect_free(std_chan_std_bk);
+        vect_free(avg_int_std_bk);
+        vect_free(std_int_std_bk);
+        vect_free(avg_int_avg_bk);
+        vect_free(std_int_avg_bk);
+        vect_free(avg_int_med_bk);
+        vect_free(std_int_med_bk);
+        vect_free(avg_chan_avg_bk);
+        vect_free(std_chan_avg_bk);
+        vect_free(avg_chan_med_bk);
+        vect_free(std_chan_med_bk);
+    }
+
+
+    
+
     /* Step over the intervals and channels and count how many are set "bad". */
     /* For a given interval, if the number of bad channels is greater than    */
     /* chantrigfrac*numchan then reject the whole interval.                   */

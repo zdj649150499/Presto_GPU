@@ -566,7 +566,7 @@ static int yy_flex_strlen(yyconst char *);
 #ifdef __cplusplus
 static int yyinput(void);
 #else
-static int input(void);
+static inline int input(void);
 #endif
 
 #endif
@@ -1152,7 +1152,7 @@ static void yyunput(int c, register char *yy_bp)
 #ifdef __cplusplus
 static int yyinput(void)
 #else
-static int input(void)
+static inline int input(void)
 #endif
 {
     int c;

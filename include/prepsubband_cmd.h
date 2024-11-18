@@ -108,6 +108,8 @@ typedef struct s_Cmdline_preps {
   char ignorechanstrP;
   char* ignorechanstr;
   int ignorechanstrC;
+  /***** -cache: Read/Write data from cache */
+  char cacheP;
   /***** uninterpreted command line parameters */
   int argc;
   /*@null*/char **argv;

@@ -739,8 +739,9 @@ void correct_subbands_for_DM(double dm, prepfoldinfo * search,
 
     rdphase = search->fold.p1 * search->proflen;
     hif = search->lofreq + (search->numchan - 1.0) * search->chan_wid;
-    dopplerhif = doppler(hif, search->avgvoverc);
+    dopplerhif =  doppler(hif, search->avgvoverc);
     hifdelay = delay_from_dm(dm, dopplerhif);
+
     subbanddelays = subband_delays(search->numchan, search->nsub, dm,
                                    search->lofreq, search->chan_wid,
                                    search->avgvoverc);
@@ -752,6 +753,53 @@ void correct_subbands_for_DM(double dm, prepfoldinfo * search,
     combine_subbands(search->rawfolds, search->stats, search->npart,
                      search->nsub, search->proflen, dmdelays, ddprofs, ddstats);
     vect_free(dmdelays);
+}
+
+void correct_subbands_for_DM_1(double dm, prepfoldinfo *search,
+			     double *ddprofs, int *dmdelays)
+{
+    int ii;
+    double hif, dopplerhif, hifdelay, rdphase;
+
+    rdphase = search->fold.p1 * search->proflen;
+    hif = search->lofreq + (search->numchan - 1.0) * search->chan_wid;
+    // dopplerhif = doppler(hif, search->avgvoverc);
+    // hifdelay = delay_from_dm(dm, dopplerhif);
+    dopplerhif = hif * (1 + search->avgvoverc);
+    if(dopplerhif == 0.0)
+        hifdelay = 0.0;
+    else 
+        hifdelay = dm / (0.000241 * dopplerhif * dopplerhif);
+    // subband_delays_1(search->numchan, search->nsub, dm,
+    //                                search->lofreq, search->chan_wid,
+    //                                search->avgvoverc, subbanddelays);
+    // for (ii = 0; ii < search->nsub; ii++)
+    //     dmdelays[ii] = NEAREST_INT((subbanddelays[ii] - hifdelay) * rdphase) % search->proflen;
+    
+    int chan_per_subband;
+    double subbandwidth, losub_hifreq;
+
+    chan_per_subband = search->numchan / search->nsub;
+    subbandwidth = search->chan_wid * chan_per_subband;
+    losub_hifreq = search->lofreq + subbandwidth - search->chan_wid;
+
+    double freq;
+    double delays;
+
+    for (ii = 0; ii < search->nsub; ii++)
+    {
+        freq = (losub_hifreq + ii * subbandwidth) * (1 + search->avgvoverc);
+        if(dopplerhif == 0.0)
+            delays = 0.0;
+        else 
+            delays = dm / (0.000241 * freq * freq);
+        dmdelays[ii] = NEAREST_INT((delays - hifdelay) * rdphase) % search->proflen;
+    }
+
+    // combine_subbands(search->rawfolds, search->stats, search->npart,
+    //                  search->nsub, search->proflen, dmdelays, ddprofs, ddstats);
+    combine_subbands_1(search->rawfolds, search->npart,
+                     search->nsub, search->proflen, dmdelays, ddprofs);
 }
 
 

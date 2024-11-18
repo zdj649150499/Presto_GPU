@@ -6,6 +6,8 @@
 #include "backend_common.h"
 #include "rfifind.h"
 
+#include "time.h"
+
 // #include <cuda_runtime.h>
 // #include <device_launch_parameters.h>
 // #include <cuda.h>
@@ -87,6 +89,11 @@ int main(int argc, char *argv[])
     fftcand *cands = NULL;
     infodata idata;
     Cmdline *cmd;
+
+    double ttim, utim, stim, tott;
+    struct tms runtimes;
+
+    tott = times(&runtimes) / (double) CLK_TCK;
 
     /* Call usage() if we have no command line arguments */
 
@@ -353,6 +360,10 @@ int main(int argc, char *argv[])
         printf("Amount Complete = %3d%%", oldper);
         fflush(stdout);
 
+        
+        static fftwf_plan tplan1;
+        static int firsttime = 1;
+
         for (ii = 0; ii < numint; ii++) {       /* Loop over the intervals */
             newper = (int) ((float) ii / numint * 100.0 + 0.5);
             if (newper > oldper) {
@@ -384,9 +395,15 @@ int main(int argc, char *argv[])
             {
                 if (RAWDATA)
                 {
-                    static fftwf_plan tplan1;
-                    tplan1 = plan_transpose( ptsperblock * blocksperint, idata.num_chan, rawdata, rawdata);
+                    
+                    if(firsttime==1)
+                    {
+                        tplan1 = plan_transpose( ptsperblock * blocksperint, idata.num_chan, rawdata, rawdata);
+                        // tplan1 = plan_transpose(s.spectra_per_subint * blocksperint, s.num_channels, rawdata, rawdata);
+                        firsttime=0;
+                    }
                     fftwf_execute_r2r(tplan1, rawdata, rawdata);
+                    // revertdata(chandatabk, ptsperblock*blocksperint, idata.num_chan, rawdata);
                     get_channelbk_avg_var(chandatabk, blocksperint, rawdata, &s, dataavg[ii], datastd[ii], 1, cmd->ncpus);
                 }
                 else if (insubs)
@@ -669,6 +686,17 @@ int main(int argc, char *argv[])
     {
         Endup_GPU();
     }
+
+    printf("\nTiming summary:\n");
+    tott = times(&runtimes) / (double) CLK_TCK - tott;
+    utim = runtimes.tms_utime / (double) CLK_TCK;
+    stim = runtimes.tms_stime / (double) CLK_TCK;
+    ttim = utim + stim;
+    printf("    CPU time: %.3f sec (User: %.3f sec, System: %.3f sec)\n",
+           ttim, utim, stim);
+    printf("  Total time: %.3f sec\n\n", tott);
+
+
     return (0);
 }
 

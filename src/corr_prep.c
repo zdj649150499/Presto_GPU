@@ -47,7 +47,7 @@ void spread_with_pad(fcomplex * data, int numdata,
   /*   'numpad' is the number of bins to use as zero padding     */
 {
     int ii, jj, numtoplace;
-    fcomplex zeros = { 0.0, 0.0 };
+    static fcomplex zeros = { 0.0, 0.0 };
 
     for (ii = 0; ii < numresult; ii++)
         result[ii] = zeros;
@@ -104,7 +104,7 @@ void place_complex_kernel(fcomplex * kernel, int numkernel,
   /*   'numresult' is the number of points in the result.  */
 {
     int ii, halfwidth;
-    fcomplex zeros = { 0.0, 0.0 };
+    fcomplex zeros = { 0.0f, 0.0f };
 
     halfwidth = numkernel / 2;
     for (ii = 0; ii < numresult; ii++)

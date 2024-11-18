@@ -12,17 +12,17 @@ version = "4.0"
 define_macros = []
 undef_macros = []
 extra_compile_args = ["-DUSEFFTW -fPIC "]
-include_dirs = ["/home/zhoudejiang/pulsar_software/include", "/usr/local/cuda/include"]
+include_dirs = ["/home/gpps/pulsar_software/include", "/usr/local/cuda/include"]
 # For MacOS with MacPorts use the following
 # include_dirs.append("/opt/local/include")
 
 # Note:  you might need to add "gfortran" to the following list if 
 # you see errors relating to missing "g" functions....
-ppgplot_libraries = ["cpgplot", "pgplot", "X11", "png", "m", "gfortran"]
-ppgplot_library_dirs = ["/home/zhoudejiang/pulsar_software/pgplot_build"]
+ppgplot_libraries = ["cpgplot", "pgplot", "X11", "m", "gfortran"]
+ppgplot_library_dirs = ["/home/gpps/pulsar_software/pgplot_build"]
 
-presto_libraries = ["presto", "fftw3f", "m", "cufft", "cudart"]
-presto_library_dirs = ["/home/zhoudejiang/pulsar_software/lib","/home/zhoudejiang/pulsar_software/presto_20220214/lib","/usr/local/cuda/lib64/"]
+presto_libraries = ["presto", "fftw3f", "m", "cufft", "cudart", "stdc++"]
+presto_library_dirs = ["/home/gpps/pulsar_software/lib","/home/zhoudejiang/gpps/presto_20220214/lib","/usr/local/cuda/lib64/"]
 
 ppgplot_include_dirs = include_dirs
 presto_include_dirs = include_dirs

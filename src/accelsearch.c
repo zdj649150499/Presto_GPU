@@ -12,6 +12,8 @@
 #include <fcntl.h>
 #endif
 
+#include "time.h"
+
 // Use OpenMP
 #ifdef _OPENMP
 #include <omp.h>
@@ -72,15 +74,19 @@ int main(int argc, char *argv[])
     cufftComplex *tmpdat_gpu;
     unsigned short *d_rinds_gpu;
     unsigned short *d_zinds_gpu;
+    
     unsigned short *d_rinds_cpu;
     unsigned short *d_zinds_cpu;
+
     float *outpows_gpu;
     float *outpows_gpu_obs;
     int *rinds_gpu;
     int nof_cand = 0 ;
 
+    // cudaStream_t stream_1;// stream_2;  
+
     accel_cand_gpu *cand_array_search_gpu;
-	accel_cand_gpu *cand_array_sort_gpu;	
+	// accel_cand_gpu *cand_array_sort_gpu;	
     accel_cand_gpu *cand_gpu_cpu;	
     cufftComplex *pdata;
     cufftComplex *data_gpu;
@@ -201,33 +207,49 @@ int main(int argc, char *argv[])
     ffdotpows *fundamental; 
     ffdotpows *subharmonic;
 
+    int stage, harmtosum, harm;
+
+    int fftlen =  subharminfs[0][0].kern[0][0].fftlen;
+    int numzs = subharminfs[0][0].numkern_zdim;
+
+    // __device__ cufftComplex data_gpu[fftlen];
+
+
     if(cmd->cudaP)
     {
-        int fftlen = subharminfs[0][0].kern[0][0].fftlen;
-        int numzs = subharminfs[0][0].numkern_zdim;
-
+        // cudaStreamCreate(&stream_1); 
+        // cudaStreamCreate(&stream_2); 
 
         cudaMalloc((void**)&tmpdat_gpu, sizeof(cufftComplex)*fftlen*numzs);
         cudaMalloc((void**)&pdata_gpu, sizeof(cufftComplex)*fftlen);
-        cudaMallocHost((void**)&pdata, sizeof(cufftComplex)*fftlen);
-        cudaMallocHost((void**)&power, sizeof(float)*fftlen);
+        // cudaMallocHost((void**)&pdata, sizeof(cufftComplex)*fftlen);
+        cudaMallocHost((void**)&power, sizeof(float)*fftlen/ACCEL_NUMBETWEEN);
         cudaMalloc((void**)&data_gpu, sizeof(cufftComplex)*fftlen);
+
+        cudaMalloc((void**)&outpows_gpu, sizeof(float)*subharminfs[0][0].numkern*obs.fftlen);  // only for ffdot->numrs*ffdot->numzs is useful, numrs is changed each time but low than fftlen, numkern = numzs;
+        cudaMemset(outpows_gpu, 0.0, sizeof(float)*subharminfs[0][0].numkern*obs.fftlen);
+        
+
+        cudaMalloc((void **)&cand_array_search_gpu, subharminfs[0][0].numkern * subharminfs[0][0].kern[0][0].fftlen * sizeof(accel_cand_gpu));
+        // cudaMalloc((void **)&cand_array_sort_gpu, subharminfs[0][0].numkern * subharminfs[0][0].kern[0][0].fftlen * sizeof(accel_cand_gpu));
+        cudaMallocHost((void**)&cand_gpu_cpu, sizeof(accel_cand_gpu)*subharminfs[0][0].numkern * subharminfs[0][0].kern[0][0].fftlen);
+
 
         if(cmd->inmemP)
         {
-            cudaMalloc((void**)&outpows_gpu_obs, sizeof(float)*(obs.highestbin+obs.corr_uselen)*obs.numbetween*obs.numz);
-            
             cudaMalloc((void**)&fkern_gpu, sizeof(cufftComplex)*fftlen*numzs);
             for(ii=0; ii<numzs; ii++)
                 cudaMemcpy(fkern_gpu+ii*fftlen, (cufftComplex *)subharminfs[0][0].kern[0][ii].data, sizeof(cufftComplex)*fftlen, cudaMemcpyHostToDevice);
+            
             cudaMalloc((void**)&rinds_gpu, sizeof(int)*fftlen*(pow(2,obs.numharmstages)-1));
+            cudaMalloc((void**)&outpows_gpu_obs, sizeof(float)*(obs.highestbin+obs.corr_uselen)*obs.numbetween*obs.numz);
         }
         else
         {
             cudaMalloc((void**)&d_rinds_gpu, sizeof(unsigned short)*obs.corr_uselen*(pow(2,obs.numharmstages)-1));
             cudaMalloc((void**)&d_zinds_gpu, sizeof(unsigned short)*obs.numz*(pow(2,obs.numharmstages)-1));
-            // cudaMallocHost((void**)&d_rinds_cpu, sizeof(unsigned short)*obs.corr_uselen);
-            // cudaMallocHost((void**)&d_zinds_cpu, sizeof(unsigned short)*obs.numz);
+            cudaMallocHost((void**)&d_rinds_cpu, sizeof(unsigned short)*obs.corr_uselen*(pow(2,obs.numharmstages)-1));
+            cudaMallocHost((void**)&d_zinds_cpu, sizeof(unsigned short)*obs.numz*(pow(2,obs.numharmstages)-1));
 
             offset_array = (int **)malloc(obs.numharmstages * sizeof(int *));
             offset_array[0] = (int *)malloc( 1 * sizeof(int) );
@@ -239,15 +261,10 @@ int main(int argc, char *argv[])
             fkern_gpu =  cp_kernel_array_to_gpu(subharminfs, obs.numharmstages, offset_array);
         }
 
-        cudaMalloc((void**)&outpows_gpu, sizeof(float)*subharminfs[0][0].numkern*obs.fftlen);  // only for ffdot->numrs*ffdot->numzs is useful, numrs is changed each time but low than fftlen, numkern = numzs;
-        cudaMemset(outpows_gpu, 0.0, sizeof(float)*subharminfs[0][0].numkern*obs.fftlen);
+        init_cuFFT_plans(subharminfs, obs.numharmstages, obs.inmem);
         
 
-        cudaMalloc((void **)&cand_array_search_gpu, subharminfs[0][0].numkern * subharminfs[0][0].kern[0][0].fftlen * sizeof(accel_cand_gpu));
-        cudaMalloc((void **)&cand_array_sort_gpu, subharminfs[0][0].numkern * subharminfs[0][0].kern[0][0].fftlen * sizeof(accel_cand_gpu));
-        cudaMallocHost((void**)&cand_gpu_cpu, sizeof(accel_cand_gpu)*subharminfs[0][0].numkern * subharminfs[0][0].kern[0][0].fftlen);
-
-        init_cuFFT_plans(subharminfs, obs.numharmstages, obs.inmem);
+        // cudaStreamSynchronize(stream_1);
     }
     
     /* Start the main search loop */
@@ -273,18 +290,23 @@ int main(int argc, char *argv[])
                 {
                     fundamental = ini_subharm_fderivs_vol(1, 1, startr, lastr,
                                                   &subharminfs[0][0], &obs);
+                                                  
                     subharm_fderivs_vol_gpu(1, 1, startr, lastr,
-                                                  &subharminfs[0][0], &obs, fkern_gpu, pdata_gpu, tmpdat_gpu, tmpdat_gpu, outpows_gpu, outpows_gpu_obs, pdata, 1, d_zinds_gpu, d_rinds_gpu, d_zinds_cpu, d_rinds_cpu, fundamental, offset_array, 0, data_gpu, power);
+                                                  &subharminfs[0][0], &obs, fkern_gpu, pdata_gpu, tmpdat_gpu, tmpdat_gpu, outpows_gpu, outpows_gpu_obs, pdata, 0, d_zinds_gpu, d_rinds_gpu, d_zinds_cpu, d_rinds_cpu, fundamental, offset_array, 0, data_gpu, power);
                     free(fundamental);
                 }
                 startr = nextr;
             }
-        }    
+        }  
 
         /* Reset indices if needed and search for real */
         startr = obs.rlo;
         lastr = 0;
         nextr = 0;
+
+        
+
+        // int firsttime=1;
         while (startr + rstep < obs.highestbin) {
             /* Search the fundamental */
             nextr = startr + rstep;
@@ -300,15 +322,17 @@ int main(int argc, char *argv[])
                 fundamental = ini_subharm_fderivs_vol(1, 1, startr, lastr, &subharminfs[0][0], &obs);
                 subharm_fderivs_vol_gpu(1, 1, startr, lastr,
                                               &subharminfs[0][0], &obs, fkern_gpu, pdata_gpu, tmpdat_gpu, tmpdat_gpu, outpows_gpu, outpows_gpu_obs, pdata, obs.inmem, d_zinds_gpu, d_rinds_gpu, d_zinds_cpu, d_rinds_cpu, fundamental, offset_array, 0, data_gpu, power);
+                
                 if(cmd->inmemP)
+                {
                     get_rinds_gpu(fundamental, rinds_gpu, obs.numharmstages);
+                }
                 else
-                    get_rind_zind_gpu(d_rinds_gpu, d_zinds_gpu, obs.numharmstages, obs, startr);
-                nof_cand = search_ffdotpows_gpu(obs.powcut[twon_to_index(1)], outpows_gpu, cand_array_search_gpu, cand_array_sort_gpu, fundamental->numzs, fundamental->numrs, cand_gpu_cpu);
+                    get_rind_zind_gpu(d_rinds_gpu, d_zinds_gpu, d_rinds_cpu, d_zinds_cpu, obs.numharmstages, obs, startr);
+                nof_cand = search_ffdotpows_gpu(obs.powcut[twon_to_index(1)], outpows_gpu, cand_array_search_gpu, fundamental->numzs, fundamental->numrs, cand_gpu_cpu);
                 cands = search_ffdotpows_sort_gpu_result(fundamental, 1, &obs, cands, cand_gpu_cpu, nof_cand);
             }
             if (obs.numharmstages > 1) {        /* Search the subharmonics */
-                int stage, harmtosum, harm;
 
                 // Copy the fundamental's ffdot plane to the full in-core one
                 if (obs.inmem && !cmd->cudaP)
@@ -342,10 +366,10 @@ int main(int argc, char *argv[])
                         else
                         {
                             for (harm = 1; harm < harmtosum; harm += 2)
-                            subharm_fderivs_vol_gpu(harmtosum, harm, startr, lastr,
+                                subharm_fderivs_vol_gpu(harmtosum, harm, startr, lastr,
                                               &subharminfs[stage][harm-1], &obs, fkern_gpu, pdata_gpu, tmpdat_gpu, tmpdat_gpu, outpows_gpu, outpows_gpu_obs, pdata, 0, d_zinds_gpu, d_rinds_gpu, d_zinds_cpu, d_rinds_cpu, fundamental, offset_array, stage, data_gpu, power);
                         }
-                        nof_cand = search_ffdotpows_gpu(obs.powcut[twon_to_index(harmtosum)], outpows_gpu, cand_array_search_gpu, cand_array_sort_gpu, fundamental->numzs, fundamental->numrs, cand_gpu_cpu);
+                        nof_cand = search_ffdotpows_gpu(obs.powcut[twon_to_index(harmtosum)], outpows_gpu, cand_array_search_gpu, fundamental->numzs, fundamental->numrs, cand_gpu_cpu);                        
                         cands = search_ffdotpows_sort_gpu_result(fundamental, harmtosum, &obs, cands, cand_gpu_cpu, nof_cand);
                     }
                 }
@@ -356,6 +380,7 @@ int main(int argc, char *argv[])
                 free(fundamental);
             startr = nextr;
         }
+
         print_percent_complete(obs.highestbin - obs.rlo,
                                obs.highestbin - obs.rlo, "search", 0);
     }
@@ -367,7 +392,7 @@ int main(int argc, char *argv[])
             cudaFree(outpows_gpu_obs);
             cudaFree(rinds_gpu);
         }
-        cudaFreeHost(pdata);
+        // cudaFreeHost(pdata);
         cudaFreeHost(power);
         cudaFree(data_gpu);
         cudaFree(pdata_gpu); 
@@ -376,18 +401,21 @@ int main(int argc, char *argv[])
         
         
         cudaFree(cand_array_search_gpu);
-	    cudaFree(cand_array_sort_gpu);
+	    // cudaFree(cand_array_sort_gpu);
         
         cudaFreeHost(cand_gpu_cpu);
         if(!cmd->inmemP)
         {
             cudaFree(d_zinds_gpu);
             cudaFree(d_rinds_gpu);
-            // cudaFree(d_zinds_cpu);
-            // cudaFree(d_rinds_cpu);
+            cudaFreeHost(d_zinds_cpu);
+            cudaFreeHost(d_rinds_cpu);
             free(offset_array);
         }
         destroy_cuFFT_plans(subharminfs, obs.numharmstages, obs.inmem);
+
+        // cudaStreamDestroy(stream_1);
+        // cudaStreamDestroy(stream_2);
         Endup_GPU();
     }
 

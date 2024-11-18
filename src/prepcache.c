@@ -5,14 +5,7 @@
 #include "mask.h"
 #include "backend_common.h"
 
-#include <cuda_runtime.h>
-#include <device_launch_parameters.h>
-#include <cuda.h>
-
-#include "cuda.cuh"
-
 #include "time.h"
-
 
 // Use OpenMP
 #ifdef _OPENMP
@@ -41,12 +34,7 @@ static int read_PRESTO_subbands(FILE * infiles[], int numfiles,
                                 float *subbanddata, double timeperblk,
                                 int *maskchans, int *nummasked, mask * obsmask,
                                 float clip_sigma, float *padvals);
-static int read_PRESTO_subbands_GPU(FILE * infiles[], int numfiles,
-                                float *subbanddata, double timeperblk,
-                                int *maskchans, int *nummasked, mask * obsmask,
-                                float clip_sigma, float *padvals);
-
-static int get_data(float **outdata, int blocksperread,
+static int get_data_cache(float **outdata, int blocksperread,
                     struct spectra_info *s,
                     mask * obsmask, int *idispdts, int **offsets,
                     int *padding, short **subsdata);
@@ -55,15 +43,6 @@ static void update_infodata(infodata * idata, long datawrote, long padwrote,
 static void print_percent_complete(int current, int number);
 
 extern fftwf_plan plan_transpose(int rows, int cols, float *in, float *out);
-
-
-float *outdata_gpu;
-short *outdata_bk;
-int *offsets_gpu;
-int *idispdt_gpu;
-
-int gpu_worklen, gpu_dsworklen;
-
 
 /* From CLIG */
 static int insubs = 0;
@@ -75,12 +54,6 @@ static Cmdline *cmd;
 
 int main(int argc, char *argv[])
 {
-    // struct timeval start_time, end_time;
-    // double elapsedTime;  
-    // // 获取开始时间  
-    // gettimeofday(&start_time, NULL);  
-
-
     /* Any variable that begins with 't' means topocentric */
     /* Any variable that begins with 'b' means barycentric */
     FILE **outfiles;
@@ -138,8 +111,6 @@ int main(int argc, char *argv[])
     s.apply_scale = (cmd->noscalesP) ? 0 : -1;
     s.apply_offset = (cmd->nooffsetsP) ? 0 : -1;
     s.remove_zerodm = (cmd->zerodmP) ? 1 : 0;
-    s.cudaP = (cmd->cudaP) ?  1:0;
-    s.ncpus = cmd->ncpus;
     if (cmd->noclipP) {
         cmd->clip = 0.0;
         s.clip_sigma = 0.0;
@@ -155,18 +126,14 @@ int main(int argc, char *argv[])
 #ifdef _OPENMP
         int maxcpus = omp_get_num_procs();
         int openmp_numthreads = (cmd->ncpus <= maxcpus) ? cmd->ncpus : maxcpus;
-        cmd->ncpus = openmp_numthreads;
-        s.ncpus= openmp_numthreads;
         // Make sure we are not dynamically setting the number of threads
         omp_set_dynamic(0);
         omp_set_num_threads(openmp_numthreads);
-        gettread(openmp_numthreads);
         printf("Using %d threads with OpenMP\n\n", openmp_numthreads);
 #endif
     } else {
 #ifdef _OPENMP
         omp_set_num_threads(1); // Explicitly turn off OpenMP
-        gettread(1);
 #endif
     }
 
@@ -174,16 +141,9 @@ int main(int argc, char *argv[])
     showOptionValues();
 #endif
 
-    if(cmd->cudaP == 1)
-    {
-      select_cuda_dev(cmd->cuda);
-    }
-
-
     printf("\n\n");
     printf("          Pulsar Subband De-dispersion Routine\n");
     printf("                 by Scott M. Ransom\n\n");
-    printf("            GPU version by Dejiang Zhou, NAOC\n\n");
 
     if (RAWDATA) {
         if (cmd->filterbankP)
@@ -301,14 +261,14 @@ int main(int argc, char *argv[])
 
     datafilenm = (char *) calloc(strlen(cmd->outfile) + 20, 1);
     if (!cmd->subP) {
-        printf("Writing output data to:\n");
+        // printf("Writing output data to:\n");
         outfiles = (FILE **) malloc(cmd->numdms * sizeof(FILE *));
         dms = gen_dvect(cmd->numdms);
         for (ii = 0; ii < cmd->numdms; ii++) {
             dms[ii] = cmd->lodm + ii * cmd->dmstep;
             avgdm += dms[ii];
             sprintf(datafilenm, "%s_DM%.*f.dat", cmd->outfile, dmprecision, dms[ii]);
-            outfiles[ii] = chkfopen(datafilenm, "wb");
+            // outfiles[ii] = chkfopen(datafilenm, "wb");
             // printf("   '%s'\n", datafilenm);
         }
         avgdm /= cmd->numdms;
@@ -334,7 +294,7 @@ int main(int argc, char *argv[])
         sprintf(format_str, "%%s_DM%%.*f.sub%%0%dd", num_places);
         for (ii = 0; ii < cmd->nsub; ii++) {
             sprintf(datafilenm, format_str, cmd->outfile, dmprecision, avgdm, ii);
-            outfiles[ii] = chkfopen(datafilenm, "wb");
+            // outfiles[ii] = chkfopen(datafilenm, "wb");
             // printf("   '%s'\n", datafilenm);
         }
     }
@@ -351,7 +311,7 @@ int main(int argc, char *argv[])
     worklen = s.spectra_per_subint * blocksperread;
     /* The number of topo to bary time points to generate with TEMPO */
     numbarypts = (int) (s.T * 1.1 / TDT + 5.5) + 1;
-    
+
     // Identify the TEMPO observatory code
     {
         char *outscope = (char *) calloc(40, sizeof(char));
@@ -407,8 +367,8 @@ int main(int argc, char *argv[])
     totnumtowrite = cmd->numout;
 
 
-
     /* Open cache file for write */
+    cmd->cacheP = 1;
     if(cmd->cacheP)
     {
         strcpy(s.cacheFileName, s.filenames[0]);
@@ -416,10 +376,9 @@ int main(int argc, char *argv[])
             strcat(s.cacheFileName, "_cac0");
         else
             strcat(s.cacheFileName, "_cac");
-        printf("\n*** --- >>> Read cache file %s ...\n", s.cacheFileName);
-        s.cacheFile = fopen(s.cacheFileName, "r");
+        printf("\n*** --- >>> Write cache file %s ...\n", s.cacheFileName);
+        s.cacheFile = fopen(s.cacheFileName, "w");
     }
-
 
 
 
@@ -449,23 +408,14 @@ int main(int argc, char *argv[])
                 offsets[ii][jj] = NEAREST_LONG((subdispdt[jj] - dtmp) / dsdt);
             vect_free(subdispdt);
         }
-        
-        /* Allocate our data array and start getting data */
 
-        printf("\nDe-dispersing using:\n");
-        printf("       Subbands = %d\n", cmd->nsub);
-        printf("     Average DM = %.7g\n", avgdm);
-        if (cmd->downsamp > 1) {
-            printf("     Downsample = %d\n", cmd->downsamp);
-            printf("  New sample dt = %.10g\n", dsdt);
-        }
-        printf("\n");
+        /* Allocate our data array and start getting data */
 
         if (cmd->subP)
             subsdata = gen_smatrix(cmd->nsub, worklen / cmd->downsamp);
         else
             outdata = gen_fmatrix(cmd->numdms, worklen / cmd->downsamp);
-        numread = get_data(outdata, blocksperread, &s,
+        numread = get_data_cache(outdata, blocksperread, &s,
                            &obsmask, idispdt, offsets, &padding, subsdata);
 
         while (numread == worklen) {
@@ -479,18 +429,18 @@ int main(int argc, char *argv[])
             numtowrite = numread;
             if ((totwrote + numtowrite) > cmd->numout)
                 numtowrite = cmd->numout - totwrote;
-            if (cmd->subP)
-                write_subs(outfiles, cmd->nsub, subsdata, 0, numtowrite);
-            else
-                write_data(outfiles, cmd->numdms, outdata, 0, numtowrite);
+            // if (cmd->subP)
+            //     write_subs(outfiles, cmd->nsub, subsdata, 0, numtowrite);
+            // else
+            //     write_data(outfiles, cmd->numdms, outdata, 0, numtowrite);
             totwrote += numtowrite;
 
             /* Update the statistics */
 
             if (!padding && !cmd->subP) {
-                for (ii = 0; ii < numtowrite; ii++)
-                    update_stats(statnum + ii, outdata[0][ii], &min, &max, &avg,
-                                 &var);
+                // for (ii = 0; ii < numtowrite; ii++)
+                //     update_stats(statnum + ii, outdata[0][ii], &min, &max, &avg,
+                //                  &var);
                 statnum += numtowrite;
             }
 
@@ -499,7 +449,7 @@ int main(int argc, char *argv[])
             if (totwrote == cmd->numout)
                 break;
 
-            numread = get_data(outdata, blocksperread, &s,
+            numread = get_data_cache(outdata, blocksperread, &s,
                                &obsmask, idispdt, offsets, &padding, subsdata);
         }
         datawrote = totwrote;
@@ -539,17 +489,6 @@ int main(int argc, char *argv[])
         vect_free(voverc);
         blotoa = btoa[0];
 
-        printf("   Average topocentric velocity (c) = %.7g\n", avgvoverc);
-        printf("   Maximum topocentric velocity (c) = %.7g\n", maxvoverc);
-        printf("   Minimum topocentric velocity (c) = %.7g\n\n", minvoverc);
-        printf("De-dispersing and barycentering using:\n");
-        printf("       Subbands = %d\n", cmd->nsub);
-        printf("     Average DM = %.7g\n", avgdm);
-        if (cmd->downsamp > 1) {
-            printf("     Downsample = %d\n", cmd->downsamp);
-            printf("  New sample dt = %.10g\n", dsdt);
-        }
-        printf("\n");
 
         /* Dispersion delays (in bins).  The high freq gets no delay   */
         /* All other delays are positive fractions of bin length (dt)  */
@@ -574,6 +513,7 @@ int main(int argc, char *argv[])
                 offsets[ii][jj] = NEAREST_LONG((subdispdt[jj] - dtmp) / dsdt);
             vect_free(subdispdt);
         }
+
         /* Convert the bary TOAs to differences from the topo TOAs in */
         /* units of bin length (dt) rounded to the nearest integer.   */
 
@@ -623,7 +563,7 @@ int main(int argc, char *argv[])
             subsdata = gen_smatrix(cmd->nsub, worklen / cmd->downsamp);
         else
             outdata = gen_fmatrix(cmd->numdms, worklen / cmd->downsamp);
-        numread = get_data(outdata, blocksperread, &s,
+        numread = get_data_cache(outdata, blocksperread, &s,
                            &obsmask, idispdt, offsets, &padding, subsdata);
 
         while (numread == worklen) {    /* Loop to read and write the data */
@@ -645,10 +585,10 @@ int main(int argc, char *argv[])
                 numtowrite = cmd->numout - totwrote;
             if (numtowrite > numread)
                 numtowrite = numread;
-            if (cmd->subP)
-                write_subs(outfiles, cmd->nsub, subsdata, 0, numtowrite);
-            else
-                write_data(outfiles, cmd->numdms, outdata, 0, numtowrite);
+            // if (cmd->subP)
+            //     write_subs(outfiles, cmd->nsub, subsdata, 0, numtowrite);
+            // else
+            //     write_data(outfiles, cmd->numdms, outdata, 0, numtowrite);
             datawrote += numtowrite;
             totwrote += numtowrite;
             numwritten += numtowrite;
@@ -656,9 +596,9 @@ int main(int argc, char *argv[])
             /* Update the statistics */
 
             if (!padding && !cmd->subP) {
-                for (ii = 0; ii < numtowrite; ii++)
-                    update_stats(statnum + ii, outdata[0][ii], &min, &max, &avg,
-                                 &var);
+                // for (ii = 0; ii < numtowrite; ii++)
+                //     update_stats(statnum + ii, outdata[0][ii], &min, &max, &avg,
+                //                  &var);
                 statnum += numtowrite;
             }
 
@@ -671,7 +611,7 @@ int main(int argc, char *argv[])
 
                     if (*diffbinptr > 0) {
                         /* Add a bin */
-                        write_padding(outfiles, cmd->numdms, block_avg, 1);
+                        // write_padding(outfiles, cmd->numdms, block_avg, 1);
                         numadded++;
                         totwrote++;
                     } else {
@@ -691,10 +631,10 @@ int main(int argc, char *argv[])
                     nextdiffbin = abs(*diffbinptr) - datawrote;
                     if (numtowrite > nextdiffbin)
                         numtowrite = nextdiffbin;
-                    if (cmd->subP)
-                        write_subs(outfiles, cmd->nsub, subsdata, skip, numtowrite);
-                    else
-                        write_data(outfiles, cmd->numdms, outdata, skip, numtowrite);
+                    // if (cmd->subP)
+                    //     write_subs(outfiles, cmd->nsub, subsdata, skip, numtowrite);
+                    // else
+                    //     write_data(outfiles, cmd->numdms, outdata, skip, numtowrite);
                     numwritten += numtowrite;
                     datawrote += numtowrite;
                     totwrote += numtowrite;
@@ -702,9 +642,9 @@ int main(int argc, char *argv[])
                     /* Update the statistics and counters */
 
                     if (!padding && !cmd->subP) {
-                        for (ii = 0; ii < numtowrite; ii++)
-                            update_stats(statnum + ii, outdata[0][skip + ii],
-                                         &min, &max, &avg, &var);
+                        // for (ii = 0; ii < numtowrite; ii++)
+                        //     update_stats(statnum + ii, outdata[0][skip + ii],
+                        //                  &min, &max, &avg, &var);
                         statnum += numtowrite;
                     }
                     skip += numtowrite;
@@ -720,97 +660,13 @@ int main(int argc, char *argv[])
             if (totwrote == cmd->numout)
                 break;
 
-            numread = get_data(outdata, blocksperread, &s,
+            numread = get_data_cache(outdata, blocksperread, &s,
                                &obsmask, idispdt, offsets, &padding, subsdata);
         }
     }
 
-    /* Calculate the amount of padding we need (don't pad subbands) */
-
-    if (!cmd->subP && (cmd->numout > totwrote))
-        padwrote = padtowrite = cmd->numout - totwrote;
-
-    /* Write the new info file for the output data */
-
-    idata.dt = dsdt;
-    update_infodata(&idata, totwrote, padtowrite, diffbins,
-                    numdiffbins, cmd->downsamp);
-    for (ii = 0; ii < cmd->numdms; ii++) {
-        idata.dm = dms[ii];
-        if (!cmd->nobaryP) {
-            double baryepoch, barydispdt, baryhifreq;
-
-            baryhifreq = idata.freq + (s.num_channels - 1) * idata.chan_wid;
-            barydispdt = delay_from_dm(dms[ii], doppler(baryhifreq, avgvoverc));
-            baryepoch = blotoa - (barydispdt / SECPERDAY);
-            idata.bary = 1;
-            idata.mjd_i = (int) floor(baryepoch);
-            idata.mjd_f = baryepoch - idata.mjd_i;
-        }
-        if (cmd->subP)
-            sprintf(idata.name, "%s_DM%.*f.sub", cmd->outfile, dmprecision, dms[ii]);
-        else
-            sprintf(idata.name, "%s_DM%.*f", cmd->outfile, dmprecision, dms[ii]);
-        writeinf(&idata);
-    }
-
-    /* Set the padded points equal to the average data point */
-
-    if (idata.numonoff >= 1) {
-        int index, startpad, endpad;
-
-        for (ii = 0; ii < cmd->numdms; ii++) {
-            fclose(outfiles[ii]);
-            sprintf(datafilenm, "%s_DM%.*f.dat", cmd->outfile, dmprecision, dms[ii]);
-            outfiles[ii] = chkfopen(datafilenm, "rb+");
-        }
-        for (ii = 0; ii < idata.numonoff; ii++) {
-            index = 2 * ii;
-            startpad = idata.onoff[index + 1];
-            if (ii == idata.numonoff - 1)
-                endpad = idata.N - 1;
-            else
-                endpad = idata.onoff[index + 2];
-            for (jj = 0; jj < cmd->numdms; jj++)
-                chkfseek(outfiles[jj], (startpad + 1) * sizeof(float), SEEK_SET);
-            padtowrite = endpad - startpad;
-            write_padding(outfiles, cmd->numdms, avg, padtowrite);
-        }
-    }
-
-    /* Print simple stats and results */
-
-    if (!cmd->subP) {
-        var /= (datawrote - 1);
-        print_percent_complete(1, 1);
-        printf("\n\nDone.\n\nSimple statistics of the output data:\n");
-        printf("             Data points written:  %ld\n", totwrote);
-        if (padwrote)
-            printf("          Padding points written:  %ld\n", padwrote);
-        if (!cmd->nobaryP) {
-            if (numadded)
-                printf("    Bins added for barycentering:  %d\n", numadded);
-            if (numremoved)
-                printf("  Bins removed for barycentering:  %d\n", numremoved);
-        }
-        printf("           Maximum value of data:  %.2f\n", max);
-        printf("           Minimum value of data:  %.2f\n", min);
-        printf("              Data average value:  %.2f\n", avg);
-        printf("         Data standard deviation:  %.2f\n", sqrt(var));
-        printf("\n");
-    } else {
-        printf("\n\nDone.\n");
-        printf("             Data points written:  %ld\n", totwrote);
-        if (padwrote)
-            printf("          Padding points written:  %ld\n", padwrote);
-        if (!cmd->nobaryP) {
-            if (numadded)
-                printf("    Bins added for barycentering:  %d\n", numadded);
-            if (numremoved)
-                printf("  Bins removed for barycentering:  %d\n", numremoved);
-        }
-        printf("\n");
-    }
+    print_percent_complete(1, 1);
+    printf("\n");
 
     /* Close the files and cleanup */
 
@@ -819,9 +675,8 @@ int main(int argc, char *argv[])
     }
     //  Close all the raw files and free their vectors
     close_rawfiles(&s);
-    for (ii = 0; ii < cmd->numdms; ii++)
-        fclose(outfiles[ii]);
-    
+    // for (ii = 0; ii < cmd->numdms; ii++)
+    //     fclose(outfiles[ii]);
     if (cmd->subP) {
         vect_free(subsdata[0]);
         vect_free(subsdata);
@@ -829,7 +684,6 @@ int main(int argc, char *argv[])
         vect_free(outdata[0]);
         vect_free(outdata);
     }
-    
     free(outfiles);
     vect_free(dms);
     vect_free(idispdt);
@@ -847,14 +701,6 @@ int main(int argc, char *argv[])
         fclose(s.cacheFile);
     }
 
-
-    if(cmd->cudaP == 1)
-    {
-        if(cmd->cacheP)
-            free_prep_subband_GPU_cache_array();
-        Endup_GPU();
-    }
-
     printf("\nTiming summary:\n");
     tott = times(&runtimes) / (double) CLK_TCK - tott;
     utim = runtimes.tms_utime / (double) CLK_TCK;
@@ -863,7 +709,6 @@ int main(int argc, char *argv[])
     printf("    CPU time: %.3f sec (User: %.3f sec, System: %.3f sec)\n",
            ttim, utim, stim);
     printf("  Total time: %.3f sec\n\n", tott);
-
 
     return (0);
 }
@@ -959,7 +804,7 @@ static int read_PRESTO_subbands(FILE * infiles[], int numfiles,
 
     /* Clip nasty RFI if requested and we're not masking all the channels */
     if ((clip_sigma > 0.0) && !(mask && (*nummasked == -1))) {
-        clip_times(subbanddata, SUBSBLOCKLEN, numfiles, clip_sigma, padvals, cmd->ncpus);
+        clip_times(subbanddata, SUBSBLOCKLEN, numfiles, clip_sigma, padvals, 1);
     }
 
     /* Mask it if required */
@@ -1001,84 +846,8 @@ static int read_PRESTO_subbands(FILE * infiles[], int numfiles,
 }
 
 
-static int read_PRESTO_subbands_GPU(FILE * infiles[], int numfiles,
-                                float *subbanddata, double timeperblk,
-                                int *maskchans, int *nummasked, mask * obsmask,
-                                float clip_sigma, float *padvals)
-/* Read short int subband data written by prepsubband */
-{
-    int ii, jj, index, numread = 0, mask = 0;
-    short subsdata[SUBSBLOCKLEN];
-    double starttime, run_avg;
-    static int currentblock = 0;
-    float *subbanddata_CPU = gen_fvect(numfiles*SUBSBLOCKLEN);
 
-    if (obsmask->numchan)
-        mask = 1;
-
-    /* Read the data */
-    for (ii = 0; ii < numfiles; ii++) {
-        numread = chkfread(subsdata, sizeof(short), SUBSBLOCKLEN, infiles[ii]);
-        run_avg = 0.0;
-        if (cmd->runavgP == 1) {
-            for (jj = 0; jj < numread; jj++)
-                run_avg += (float) subsdata[jj];
-            run_avg /= numread;
-        }
-        for (jj = 0, index = ii; jj < numread; jj++, index += numfiles)
-            subbanddata_CPU[index] = (float) subsdata[jj] - run_avg;
-        for (jj = numread; jj < SUBSBLOCKLEN; jj++, index += numfiles)
-            subbanddata_CPU[index] = 0.0;
-    }
-
-    if (mask) {
-        starttime = currentblock * timeperblk;
-        *nummasked = check_mask(starttime, timeperblk, obsmask, maskchans);
-    }
-
-    /* Clip nasty RFI if requested and we're not masking all the channels */
-    if ((clip_sigma > 0.0) && !(mask && (*nummasked == -1))) {
-        clip_times(subbanddata_CPU, SUBSBLOCKLEN, numfiles, clip_sigma, padvals, cmd->ncpus);
-    }
-    cudaMemcpy(subbanddata, subbanddata_CPU, sizeof(float)*numfiles*SUBSBLOCKLEN, cudaMemcpyHostToDevice);
-
-    vect_free(subbanddata_CPU);
-
-    /* Mask it if required */
-    if (mask && numread) {
-        if (*nummasked == -1) { /* If all channels are masked */
-            for (ii = 0; ii < SUBSBLOCKLEN; ii++)
-                cudaMemcpy(subbanddata + ii * numfiles, padvals, sizeof(float)*numfiles, cudaMemcpyHostToDevice);
-        } else if (*nummasked > 0) {    /* Only some of the channels are masked */
-            float *padvals_gpu;
-            int *maskchans_gpu;
-            
-            cudaMalloc((void**)&padvals_gpu, sizeof(float)*numfiles);
-            cudaMalloc((void**)&maskchans_gpu, sizeof(int)*(*nummasked));
-
-            cudaMemcpy(padvals_gpu, padvals, sizeof(float)*numfiles, cudaMemcpyHostToDevice);
-            cudaMemcpy(maskchans_gpu, maskchans, sizeof(int)*(*nummasked), cudaMemcpyHostToDevice);
-
-            SetSubData4Mask_GPU(subbanddata, padvals_gpu, maskchans_gpu,SUBSBLOCKLEN, numfiles);
-
-            cudaFree(padvals_gpu);
-            cudaFree(maskchans_gpu);
-        }
-    }
-
-    /* Zero-DM removal if required */
-    if (cmd->zerodmP == 1)
-        ZeroDM_subchan_GPU(subbanddata, SUBSBLOCKLEN, numfiles);
-
-    currentblock += 1;
-    
-    return numread;
-}
-
-
-
-
-static int get_data(float **outdata, int blocksperread,
+static int get_data_cache(float **outdata, int blocksperread,
                     struct spectra_info *s,
                     mask * obsmask, int *idispdts, int **offsets,
                     int *padding, short **subsdata)
@@ -1086,317 +855,83 @@ static int get_data(float **outdata, int blocksperread,
     static int firsttime = 1, *maskchans = NULL, blocksize;
     static int worklen, dsworklen;
     static float *tempzz, *data1, *data2, *dsdata1 = NULL, *dsdata2 = NULL;
-    static float *currentdata, *currentdata_cpu,  *lastdata, *currentdsdata, *lastdsdata, *currentdata_block;
-    static float *data_gpu, *lastdata_gpu;
+    static float *currentdata, *lastdata, *currentdsdata, *lastdsdata;
     static double blockdt;
-    static fftwf_plan tplan1;
     int totnumread = 0, numread = 0, ii, jj, kk, tmppad = 0, nummasked = 0;
+    static fftwf_plan tplan1;
 
-    
-    if(!cmd->cudaP)  // getdata on CPU
-    {
-        if (firsttime) {
-            if (cmd->maskfileP)
-                maskchans = gen_ivect(s->num_channels);
-            worklen = s->spectra_per_subint * blocksperread;
-            dsworklen = worklen / cmd->downsamp;
-
-            blocksize = s->spectra_per_subint * cmd->nsub;
-            blockdt = s->spectra_per_subint * s->dt;
-
-            data1 = gen_fvect(cmd->nsub * worklen);
-            data2 = gen_fvect(cmd->nsub * worklen);
-            currentdata_block = gen_fvect(blocksize);
-            currentdata = data1;
-            lastdata = data2;
-            if (cmd->downsamp > 1) {
-                dsdata1 = gen_fvect(cmd->nsub * dsworklen);
-                dsdata2 = gen_fvect(cmd->nsub * dsworklen);
-                currentdsdata = dsdata1;
-                lastdsdata = dsdata2;
-            } else {
-                currentdsdata = data1;
-                lastdsdata = data2;
+    if (firsttime) {
+        if (cmd->maskfileP)
+            maskchans = gen_ivect(s->num_channels);
+        worklen = s->spectra_per_subint * blocksperread;
+        dsworklen = worklen / cmd->downsamp;
+        // Make sure that our working blocks are long enough...
+        for (ii = 0; ii < cmd->numdms; ii++) {
+            for (jj = 0; jj < cmd->nsub; jj++) {
+                if (offsets[ii][jj] > dsworklen)
+                    printf
+                        ("WARNING!:  (offsets[%d][%d] = %d) > (dsworklen = %d)\n",
+                         ii, jj, offsets[ii][jj], dsworklen);
             }
         }
-        while (1) {
-            if (RAWDATA || insubs) {
-                for (ii = 0; ii < blocksperread; ii++) {
-                    if (RAWDATA)
-                    {
-                        // numread = read_subbands(currentdata + ii * blocksize, idispdts,
-                        //                         cmd->nsub, s, 0, &tmppad,
-                        //                         maskchans, &nummasked, obsmask);
-                        // numread = read_subbands(currentdata_block, idispdts,
-                        //                         cmd->nsub, s, 1, &tmppad,
-                        //                         maskchans, &nummasked, obsmask, 1, 1);
-                        if(cmd->cacheP == 1)
-                            numread = read_subbands_cache(currentdata, idispdts,
-                                                    cmd->nsub, s, 1, &tmppad,
-                                                    maskchans, &nummasked, obsmask, blocksperread, ii+1);
-                        else
-                            numread = read_subbands(currentdata, idispdts,
-                                                    cmd->nsub, s, 1, &tmppad,
-                                                    maskchans, &nummasked, obsmask, blocksperread, ii+1);
 
-                        if (numread != s->spectra_per_subint) {
-                            // for (jj = ii * blocksize; jj < (ii + 1) * blocksize; jj++)
-                            //     currentdata[jj] = 0.0f;
-                            // for (jj = 0; jj < blocksize; jj++)
-                            //     currentdata_block[jj] = 0.0f;
-                            for (jj = 0; jj < cmd->nsub; jj++)
-                            {
-                                float *sub = currentdata + jj*worklen + ii*s->spectra_per_subint;
-                                for(kk = 0; kk < s->spectra_per_subint; kk++)
-                                    sub[kk] = 0.0f;
-                            }
-                                
-                        }
-                        /** added by zdj ***/
-                        // for(jj=0; jj< cmd->nsub; jj++)   
-                            // memcpy(currentdata+jj*worklen+ii*s->spectra_per_subint, currentdata_block+jj*s->spectra_per_subint, sizeof(float)*s->spectra_per_subint);
-
-                        
-                    }
-                    else if (insubs)
-                    {
-                        numread = read_PRESTO_subbands(s->files, s->num_files,
-                                                    currentdata + ii * blocksize,
-                                                    blockdt, maskchans, &nummasked,
-                                                    obsmask, cmd->clip, s->padvals);
-                        if (numread != s->spectra_per_subint) {
-                            for (jj = ii * blocksize; jj < (ii + 1) * blocksize; jj++)
-                                currentdata[jj] = 0.0f;
-                                // currentdata_block[jj] = 0.0f;
-                        }
-                    }
-                    if (!firsttime)
-                        totnumread += numread;
-                    if (tmppad)
-                        *padding = 1;
-                }
-                if(insubs)
-                {
-                    if(firsttime)
-                        tplan1 = plan_transpose(worklen, cmd->nsub, currentdata, currentdata);
-                    fftwf_execute_r2r(tplan1, currentdata, currentdata);
-                }
-            }          
-            /* Downsample the subband data if needed */
-            /* freq first */
-            if (cmd->downsamp > 1) {
-                static int kk, index, outdex;
-                static float ftmp;
-                // for (ii = 0; ii < dsworklen; ii++) {
-                //     const int dsoffset = ii * cmd->nsub;
-                //     const int offset = dsoffset * cmd->downsamp;
-                //     for (jj = 0; jj < cmd->nsub; jj++) {
-                //         const int dsindex = dsoffset + jj;
-                //         index = offset + jj;
-                //         currentdsdata[dsindex] = ftmp = 0.0;
-                //         for (kk = 0; kk < cmd->downsamp; kk++) {
-                //             ftmp += currentdata[index];
-                //             index += cmd->nsub;
-                //         }
-                //         currentdsdata[dsindex] = ftmp / cmd->downsamp;
-                //     }
-                // }
-                outdex=0;
-                for (jj = 0; jj < cmd->nsub; jj++) {
-                    for (ii = 0; ii < dsworklen; ii++) {
-                        outdex = ii + jj*dsworklen;
-                        index = outdex*cmd->downsamp;
-                        ftmp = 0.0f;
-                        for (kk = 0; kk < cmd->downsamp; kk++) {
-                            ftmp += currentdata[index];
-                            index++;
-                        }
-                        currentdsdata[outdex] = ftmp / cmd->downsamp;
-                    }
-                }
-            }      
-
-            if (firsttime) {
-                SWAP(currentdata, lastdata);
-                SWAP(currentdsdata, lastdsdata);
-                firsttime = 0;
-            } else
-                break;
-        }
-
-        if (!cmd->subP) {
-            for (ii = 0; ii < cmd->numdms; ii++)
-                float_dedisp(currentdsdata, lastdsdata, dsworklen,
-                            cmd->nsub, offsets[ii], 0.0, outdata[ii], 1);
-                // float_dedisp_time(currentdsdata, lastdsdata, dsworklen,
-                //             cmd->nsub, offsets[ii], 0.0f, outdata[ii]);
+        blocksize = s->spectra_per_subint * cmd->nsub;
+        blockdt = s->spectra_per_subint * s->dt;
+        data1 = gen_fvect(cmd->nsub * worklen);
+        data2 = gen_fvect(cmd->nsub * worklen);
+        currentdata = data1;
+        lastdata = data2;
+        if (cmd->downsamp > 1) {
+            dsdata1 = gen_fvect(cmd->nsub * dsworklen);
+            dsdata2 = gen_fvect(cmd->nsub * dsworklen);
+            currentdsdata = dsdata1;
+            lastdsdata = dsdata2;
         } else {
-            /* Input format is sub1[0], sub2[0], sub3[0], ..., sub1[1], sub2[1], sub3[1], ... */
-            // float infloat;
-            // for (ii = 0; ii < cmd->nsub; ii++) {
-            //     for (jj = 0; jj < dsworklen; jj++) {
-            //         infloat = lastdsdata[ii + (cmd->nsub * jj)];
-            //         subsdata[ii][jj] = (short) (infloat + 0.5);
-            //     }
-            // }
-            for (ii = 0; ii < cmd->nsub; ii++) {
-                for (jj = 0; jj < dsworklen; jj++) {
-                    subsdata[ii][jj] = (short) (lastdsdata[ii*dsworklen + jj] + 0.5f);
-                }
-            }
-        }
-        SWAP(currentdata, lastdata);
-        SWAP(currentdsdata, lastdsdata);
-        if (totnumread != worklen) {
-            if (cmd->maskfileP)
-                vect_free(maskchans);
-            vect_free(data1);
-            vect_free(data2);
-            vect_free(currentdata_block);
-            if (cmd->downsamp > 1) {
-                vect_free(dsdata1);
-                vect_free(dsdata2);
-            }
+            currentdsdata = data1;
+            lastdsdata = data2;
         }
     }
-    else if(cmd->cudaP)            // getdata on GPU
-    {
+    while (1) {
+        if (RAWDATA || insubs) {
+            for (ii = 0; ii < blocksperread; ii++) {
+                if (RAWDATA)
+                    // numread = read_subbands(currentdata + ii * blocksize, idispdts,
+                    //                         cmd->nsub, s, 1, &tmppad,
+                    //                         maskchans, &nummasked, obsmask);
+                    numread = write_subbands_cache(currentdata, idispdts,
+                                            cmd->nsub, s, 1, &tmppad,
+                                            maskchans, &nummasked, obsmask, blocksperread, ii+1, cmd->ncpus);
+                else if (insubs)
+                    numread = read_PRESTO_subbands(s->files, s->num_files,
+                                                   currentdata + ii * blocksize,
+                                                   blockdt, maskchans, &nummasked,
+                                                   obsmask, cmd->clip, s->padvals);
+                if (!firsttime)
+                    totnumread += numread;
+
+                if (tmppad)
+                    *padding = 1;
+            }
+        }
+
         if (firsttime) {
-            if (cmd->maskfileP)
-                maskchans = gen_ivect(s->num_channels);
-            worklen = s->spectra_per_subint * blocksperread;
-            dsworklen = worklen / cmd->downsamp;
+            SWAP(currentdata, lastdata);
+            SWAP(currentdsdata, lastdsdata);
+            firsttime = 0;
+        } else
+            break;
+    }
 
-            blocksize = s->spectra_per_subint * cmd->nsub;
-            blockdt = s->spectra_per_subint * s->dt;
-
-            gpu_worklen = worklen;
-            gpu_dsworklen = dsworklen;
-            
-            cudaMalloc((void**)&currentdata_block, sizeof(float)*blocksize);
-            cudaMalloc((void**)&data1, sizeof(float)*cmd->nsub*gpu_worklen);
-            cudaMalloc((void**)&data2, sizeof(float)*cmd->nsub*gpu_worklen);
-            cudaMalloc((void**)&idispdt_gpu, sizeof(int)*s->num_channels);
-            cudaMalloc((void**)&offsets_gpu, sizeof(int)*cmd->numdms*cmd->nsub);
-            cudaMalloc((void**)&outdata_gpu, sizeof(float)*cmd->numdms*gpu_dsworklen);
-            cudaMalloc((void**)&data_gpu, sizeof(float)*s->spectra_per_subint*s->num_channels);
-            cudaMalloc((void**)&lastdata_gpu, sizeof(float)*s->spectra_per_subint*s->num_channels);
-
-            cudaMemcpy(idispdt_gpu, idispdts, sizeof(int)*s->num_channels, cudaMemcpyHostToDevice);
-            for (ii = 0; ii < cmd->numdms; ii++) {
-                cudaMemcpy(offsets_gpu+ii*cmd->nsub, offsets[ii], sizeof(int)*(cmd->nsub), cudaMemcpyHostToDevice);
-            }
-            currentdata = data1;
-            lastdata = data2;
-            if (cmd->downsamp > 1) {
-                cudaMalloc((void**)&dsdata1, sizeof(float)*cmd->nsub*gpu_dsworklen);
-                cudaMalloc((void**)&dsdata2, sizeof(float)*cmd->nsub*gpu_dsworklen);
-                currentdsdata  = dsdata1;
-                lastdsdata  = dsdata2;
-            } else {
-                currentdsdata  = data1;
-                lastdsdata  = data2;
-            }
-        }
-        while (1) {
-            if (RAWDATA || insubs)
-            {
-                for (ii = 0; ii < blocksperread; ii++) 
-                {
-                    if (RAWDATA)
-                    {
-                        if(cmd->cacheP == 1)
-                            numread = read_subbands_GPU_cache(currentdata + ii * blocksize, data_gpu, lastdata_gpu, idispdt_gpu, cmd->nsub, s, 0, &tmppad, maskchans, &nummasked, obsmask);
-                        else
-                            numread = read_subbands_GPU(currentdata + ii * blocksize, data_gpu, lastdata_gpu, idispdt_gpu, cmd->nsub, s, 0, &tmppad, maskchans, &nummasked, obsmask);
-                        //  numread = read_subbands_GPU(currentdata_block, data_gpu, lastdata_gpu, idispdt_gpu, cmd->nsub, s, 1, &tmppad, maskchans, &nummasked, obsmask);
-
-                        if (numread != s->spectra_per_subint) {
-                            cudaMemset(currentdata+ii * blocksize, 0.0f, sizeof(float)*blocksize);
-                            // cudaMemset(currentdata_block, 0.0f, sizeof(float)*blocksize);
-                        }
-                        // for(jj=0; jj< cmd->nsub; jj++)
-                        //     cudaMemcpy(currentdata+jj*worklen+ii*s->spectra_per_subint, currentdata_block+jj*s->spectra_per_subint, sizeof(float)*s->spectra_per_subint, cudaMemcpyDeviceToDevice);
-                    }
-                    else if (insubs)
-                    {
-                        // numread = read_PRESTO_subbands_GPU(s->files, s->num_files,
-                        //                             currentdata + ii * blocksize,
-                        //                             blockdt, maskchans, &nummasked,
-                        //                             obsmask, cmd->clip, s->padvals);
-                        numread = read_PRESTO_subbands(s->files, s->num_files,
-                                                currentdata_cpu + ii * blocksize,
-                                                blockdt, maskchans, &nummasked,
-                                                obsmask, cmd->clip, s->padvals);
-                        if (numread != s->spectra_per_subint) {
-                            for (jj = ii * blocksize; jj < (ii + 1) * blocksize; jj++)
-                                currentdata_cpu[jj] = 0.0f;
-                                // currentdata_block[jj] = 0.0f;
-                        }
-                    }
-                    if (!firsttime)
-                        totnumread += numread;
-                    if (tmppad)
-                        *padding = 1;
-                }
-                if(insubs)
-                {
-                    if(firsttime)
-                        tplan1 = plan_transpose(worklen, cmd->nsub, currentdata_cpu, currentdata_cpu);
-                    fftwf_execute_r2r(tplan1, currentdata_cpu, currentdata_cpu);
-                    cudaMemcpy(currentdata, currentdata_cpu, sizeof(float)*cmd->nsub * worklen, cudaMemcpyHostToDevice);
-                }
-            }
-
-            /* Downsample the subband data if needed */
-            if (cmd->downsamp > 1)
-                downsamp_GPU(currentdata, currentdsdata, cmd->nsub, dsworklen, cmd->downsamp, 0); 
-            if (firsttime) {
-                SWAP(currentdata, lastdata);
-                SWAP(currentdsdata, lastdsdata);
-                firsttime = 0;
-            } else
-                break;
-        }
-        if (!cmd->subP) {
-            float_dedisp_GPU(currentdsdata, lastdsdata, gpu_dsworklen,
-                        cmd->nsub, offsets_gpu, 0.0f, outdata_gpu, cmd->numdms, 0);
-            for(ii=0; ii<cmd->numdms; ii++)
-                cudaMemcpy(outdata[ii], outdata_gpu+gpu_dsworklen*ii, sizeof(float)*gpu_dsworklen, cudaMemcpyDeviceToHost);   //CPU get out data
-        }
-        else
-        {
-            if(firsttime)
-                cudaMalloc((void**)&outdata_bk, sizeof(short)*cmd->nsub*dsworklen);
-            Get_subsdata(lastdsdata, outdata_bk, cmd->nsub, dsworklen);
-            for(ii=0;ii<cmd->nsub;ii++)
-            {
-                cudaMemcpy(subsdata[ii], outdata_bk+dsworklen*ii, sizeof(short)*dsworklen, cudaMemcpyDeviceToHost);   //CPU get out data
-            }
-        }
-
-
-        SWAP(currentdata, lastdata);
-        SWAP(currentdsdata, lastdsdata);
-        if (totnumread != worklen) {
-            if (cmd->maskfileP)
-                vect_free(maskchans);
-            
-            cudaFree(idispdt_gpu);
-            cudaFree(offsets_gpu);
-            cudaFree(outdata_gpu);
-            cudaFree(data1);
-            cudaFree(data2);
-            cudaFree(currentdata_block);
-            cudaFree(data_gpu);
-            cudaFree(lastdata_gpu);
-            vect_free(currentdata_cpu);
-            if (cmd->downsamp > 1) {
-                cudaFree(dsdata1);
-                cudaFree(dsdata2);
-            }
-            if (!cmd->subP)
-                cudaFree(outdata_bk);
+    SWAP(currentdata, lastdata);
+    SWAP(currentdsdata, lastdsdata);
+    if (totnumread != worklen) {
+        if (cmd->maskfileP)
+            vect_free(maskchans);
+        vect_free(data1);
+        vect_free(data2);
+        if (cmd->downsamp > 1) {
+            vect_free(dsdata1);
+            vect_free(dsdata2);
         }
     }
     return totnumread;

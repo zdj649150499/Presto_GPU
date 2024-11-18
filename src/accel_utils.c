@@ -539,78 +539,148 @@ GSList *eliminate_harmonics(GSList * cands, int *numcands)
 
 void optimize_accelcand(accelcand * cand, accelobs * obs)
 {
-    int ii;
-    double r, z, w;
+    register int ii;
+    static double r, z, w;
 
-    cand->pows = gen_dvect(cand->numharm);
-    cand->hirs = gen_dvect(cand->numharm);
-    cand->hizs = gen_dvect(cand->numharm);
-    cand->hiws = gen_dvect(cand->numharm);
-    cand->derivs = (rderivs *) malloc(sizeof(rderivs) * cand->numharm);
+    register int numharm = cand->numharm;
+    register double cand_r = cand->r;
+    register double cand_z = cand->z;
+    register double cand_w = cand->w;
+
     
-    if (obs->use_harmonic_polishing &&
-        (obs->mmap_file || obs->dat_input)) {
-        if (obs->numw) {
-            max_rzw_arr_harmonics(obs->fft, obs->numbins,
-                                  cand->numharm,
-                                  cand->r - obs->lobin,
-                                  cand->z, cand->w, &r, &z, &w,
+
+    register long long obs_numbins = obs->numbins;
+    register long long obs_lobin = obs->lobin;
+    register int obs_numw = obs->numw;
+
+    register int obs_dat_input = obs->dat_input;
+    register int obs_mmap_file = obs->mmap_file;
+    register int obs_use_harmonic_polishing = obs->use_harmonic_polishing;
+
+    cand->pows = gen_dvect(numharm);
+    cand->hirs = gen_dvect(numharm);
+    cand->hizs = gen_dvect(numharm);
+    cand->hiws = gen_dvect(numharm);
+    cand->derivs = (rderivs *) malloc(sizeof(rderivs) * numharm);
+
+    double pows_bk[numharm];
+    double hirs_bk[numharm];
+    double hizs_bk[numharm];
+    double hiws_bk[numharm];
+    rderivs derivs_bk[numharm];
+    
+    
+    if (obs_use_harmonic_polishing &&
+        (obs_mmap_file || obs_dat_input)) {
+        if (obs_numw) {
+            max_rzw_arr_harmonics(obs->fft, obs_numbins,
+                                  numharm,
+                                  cand_r - obs_lobin,
+                                  cand_z, cand_w, &r, &z, &w,
                                   cand->derivs, cand->pows);
             
         } else {
-            max_rz_arr_harmonics(obs->fft, obs->numbins,
-                                 cand->numharm,
-                                 cand->r - obs->lobin,
-                                 cand->z, &r, &z,
-                                 cand->derivs, cand->pows);
+            // max_rz_arr_harmonics(obs->fft, obs_numbins,
+            //                      numharm,
+            //                      cand_r - obs_lobin,
+            //                      cand_z, &r, &z,
+            //                      cand->derivs, cand->pows);
+            max_rz_arr_harmonics(obs->fft, obs_numbins,
+                                 numharm,
+                                 cand_r - obs_lobin,
+                                 cand_z, &r, &z,
+                                 derivs_bk, pows_bk);
         }
-        for (ii = 0; ii < cand->numharm; ii++) {
-            cand->hirs[ii] = (r + obs->lobin) * (ii + 1);
-            cand->hizs[ii] = z * (ii + 1);
-            cand->hiws[ii] = obs->numw ? w * (ii + 1) : 0.0;
+        for (ii = 0; ii < numharm; ii++) {
+            // cand->hirs[ii] = (r + obs_lobin) * (ii + 1);
+            // cand->hizs[ii] = z * (ii + 1);
+            // cand->hiws[ii] = obs_numw ? w * (ii + 1) : 0.0;
+            hirs_bk[ii] = (r + obs_lobin) * (ii + 1);
+            hizs_bk[ii] = z * (ii + 1);
+            hiws_bk[ii] = obs_numw ? w * (ii + 1) : 0.0;
         }
     } else {
-        for (ii = 0; ii < cand->numharm; ii++) {
-            if (obs->mmap_file || obs->dat_input) {
-                if (obs->numw)
-                    cand->pows[ii] = max_rzw_arr(obs->fft,
-                                                 obs->numbins,
-                                                 cand->r * (ii + 1) - obs->lobin,
-                                                 cand->z * (ii + 1),
-                                                 cand->w * (ii + 1),
-                                                 &(cand->hirs[ii]),
-                                                 &(cand->hizs[ii]),
-                                                 &(cand->hiws[ii]),
-                                                 &(cand->derivs[ii]));
+        for (ii = 0; ii < numharm; ii++) {
+            if (obs_mmap_file || obs_dat_input) {
+                if (obs_numw)
+                    // cand->pows[ii] = max_rzw_arr(obs->fft,
+                    //                              obs_numbins,
+                    //                              cand_r * (ii + 1) - obs_lobin,
+                    //                              cand_z * (ii + 1),
+                    //                              cand_w * (ii + 1),
+                    //                              &(cand->hirs[ii]),
+                    //                              &(cand->hizs[ii]),
+                    //                              &(cand->hiws[ii]),
+                    //                              &(cand->derivs[ii]));
+                    pows_bk[ii] = max_rzw_arr(obs->fft,
+                                                 obs_numbins,
+                                                 cand_r * (ii + 1) - obs_lobin,
+                                                 cand_z * (ii + 1),
+                                                 cand_w * (ii + 1),
+                                                 &(hirs_bk[ii]),
+                                                 &(hizs_bk[ii]),
+                                                 &(hiws_bk[ii]),
+                                                 &(derivs_bk[ii]));
                 else
-                    cand->pows[ii] = max_rz_arr(obs->fft,
-                                                obs->numbins,
-                                                cand->r * (ii + 1) - obs->lobin,
-                                                cand->z * (ii + 1),
-                                                &(cand->hirs[ii]),
-                                                &(cand->hizs[ii]), &(cand->derivs[ii]));
+                    // cand->pows[ii] = max_rz_arr(obs->fft,
+                    //                             obs_numbins,
+                    //                             cand_r * (ii + 1) - obs_lobin,
+                    //                             cand_z * (ii + 1),
+                    //                             &(cand->hirs[ii]),
+                    //                             &(cand->hizs[ii]), 
+                    //                             &(cand->derivs[ii]));
+                    pows_bk[ii] = max_rz_arr(obs->fft,
+                                                obs_numbins,
+                                                cand_r * (ii + 1) - obs_lobin,
+                                                cand_z * (ii + 1),
+                                                &(hirs_bk[ii]),
+                                                &(hizs_bk[ii]), 
+                                                &(derivs_bk[ii]));
             } else {
-                if (obs->numw)
-                    cand->pows[ii] = max_rzw_file(obs->fftfile,
-                                                  cand->r * (ii + 1) - obs->lobin,
-                                                  cand->z * (ii + 1),
-                                                  cand->w * (ii + 1),
-                                                  &(cand->hirs[ii]),
-                                                  &(cand->hizs[ii]),
-                                                  &(cand->hiws[ii]),
-                                                  &(cand->derivs[ii]));
+                if (obs_numw)
+                    // cand->pows[ii] = max_rzw_file(obs->fftfile,
+                    //                               cand_r * (ii + 1) - obs_lobin,
+                    //                               cand_z * (ii + 1),
+                    //                               cand_w * (ii + 1),
+                    //                               &(cand->hirs[ii]),
+                    //                               &(cand->hizs[ii]),
+                    //                               &(cand->hiws[ii]),
+                    //                               &(cand->derivs[ii]));
+                    pows_bk[ii] = max_rzw_file(obs->fftfile,
+                                                  cand_r * (ii + 1) - obs_lobin,
+                                                  cand_z * (ii + 1),
+                                                  cand_w * (ii + 1),
+                                                  &(hirs_bk[ii]),
+                                                  &(hizs_bk[ii]),
+                                                  &(hiws_bk[ii]),
+                                                  &(derivs_bk[ii]));
                 else
-                    cand->pows[ii] = max_rz_file(obs->fftfile,
-                                                 cand->r * (ii + 1) - obs->lobin,
-                                                 cand->z * (ii + 1),
-                                                 &(cand->hirs[ii]),
-                                                 &(cand->hizs[ii]), &(cand->derivs[ii]));
+                    // cand->pows[ii] = max_rz_file(obs->fftfile,
+                    //                                 cand_r * (ii + 1) - obs_lobin,
+                    //                                 cand_z * (ii + 1),
+                    //                                 &(cand->hirs[ii]),
+                    //                                 &(cand->hizs[ii]), 
+                    //                                 &(cand->derivs[ii]));
+                    pows_bk[ii] = max_rz_file(obs->fftfile,
+                                                 cand_r * (ii + 1) - obs_lobin,
+                                                 cand_z * (ii + 1),
+                                                 &(hirs_bk[ii]),
+                                                 &(hizs_bk[ii]), 
+                                                 &(derivs_bk[ii]));
             }
-            cand->hirs[ii] += obs->lobin;
+            // cand->hirs[ii] += obs_lobin;
+            hirs_bk[ii] += obs_lobin;
         }
     }
-    cand->sigma = candidate_sigma(cand->power, cand->numharm,
-                                  obs->numindep[twon_to_index(cand->numharm)]);
+    
+    memcpy(cand->pows, pows_bk, sizeof(double)*numharm);
+    memcpy(cand->hirs, hirs_bk, sizeof(double)*numharm);
+    memcpy(cand->hizs, hizs_bk, sizeof(double)*numharm);
+    memcpy(cand->hiws, hiws_bk, sizeof(double)*numharm);
+    memcpy(cand->derivs, derivs_bk, sizeof(rderivs)*numharm);
+
+    cand->sigma = candidate_sigma(cand->power, numharm,
+                                  obs->numindep[twon_to_index(numharm)]);
 }
 
 
@@ -660,7 +730,7 @@ void output_fundamentals(fourierprops * props, GSList * list,
     int errors[13] = { 0, 0, 0, 0, 0, 1, 1, 2, 1, 2, 2, 2, 0 };
     char tmpstr[80], ctrstr[80], *notes;
     accelcand *cand;
-    GSList *listptr;
+    register GSList *listptr;
     rzwerrs errs;
     static char **title;
     static char *titles1[] = { "", "", "Summed", "Coherent", "Num", "Period",
@@ -836,7 +906,7 @@ void output_harmonics(GSList * list, accelobs * obs, infodata * idata)
     int errors[15] = { 0, 0, 0, 2, 0, 2, 0, 2, 0, 2, 0, 2, 2, 2, 0 };
     char tmpstr[30], ctrstr[30], notes[21], *command;
     accelcand *cand;
-    GSList *listptr;
+    register GSList *listptr;
     fourierprops props;
     rzwerrs errs;
     static char *titles1[] = { "", "", "", "Power /", "Raw",
@@ -1006,6 +1076,39 @@ fcomplex *get_fourier_amplitudes(long long lobin, int numbins, accelobs * obs)
     }
      else {
         return read_fcomplex_file(obs->fftfile, lobin - obs->lobin, numbins);
+    }
+}
+
+void  *get_fourier_amplitudes_gpu(long long lobin, int numbins, accelobs * obs, fcomplex *tmpdata)
+{
+    static fcomplex zeros = { 0.0, 0.0 };
+
+    if (obs->mmap_file || obs->dat_input) {
+        long long ii, offset = 0, firstbin, newnumbins;
+        // fcomplex *tmpdata = gen_cvect(numbins);
+        
+        // zero-pad if we try to read before the beginning of the FFT
+        if (lobin - obs->lobin < 0) {
+            offset = llabs(lobin - obs->lobin);
+            for (ii = 0; ii < offset; ii++)
+                tmpdata[ii] = zeros;
+        }
+        firstbin = (lobin - obs->lobin) + offset;
+        newnumbins = numbins - offset;
+
+        // zero-pad if we try to read beyond the end of the FFT
+        if (firstbin + newnumbins > obs->numbins) {
+            long long numpad = firstbin + newnumbins - obs->numbins;
+            newnumbins = newnumbins - numpad;
+            for (ii = numbins - numpad; ii < numbins; ii++)
+                tmpdata[ii] = zeros;
+        }
+        // Now grab the data we need
+        memcpy(tmpdata + offset, obs->fft + firstbin, sizeof(fcomplex) * newnumbins);
+        // return tmpdata;
+    }
+     else {
+        read_fcomplex_file_gpu(obs->fftfile, lobin - obs->lobin, numbins, tmpdata);
     }
 }
 
@@ -1304,20 +1407,20 @@ cufftComplex *cp_kernel_array_to_gpu(subharminfo **subharminfs, int numharmstage
    return kernel_vect_on_gpu;
 }
 
-void get_rind_zind_gpu(unsigned short *d_rinds_gpu, unsigned short *d_zinds_gpu, int numharmstages, accelobs obs, double fullrlo)
+void get_rind_zind_gpu(unsigned short *d_rinds_gpu, unsigned short *d_zinds_gpu, unsigned short *rinds_cpu, unsigned short *zinds_cpu, int numharmstages, accelobs obs, double fullrlo)
 {
-    int ii, jj, kk=0;
-    unsigned short *rinds_cpu;
-    unsigned short *zinds_cpu;
+    int ii, kk=0;
+    // unsigned short *rinds_cpu;
+    // unsigned short *zinds_cpu;
     unsigned short *rinds;
     unsigned short *zinds;
     
-    cudaMallocHost((void**)&rinds_cpu, sizeof(unsigned short)*obs.corr_uselen*(pow(2,numharmstages)-1));
-    cudaMallocHost((void**)&zinds_cpu, sizeof(unsigned short)*obs.numz*(pow(2,numharmstages)-1));
+    // cudaMallocHost((void**)&rinds_cpu, sizeof(unsigned short)*obs.corr_uselen*(pow(2,numharmstages)-1));
+    // cudaMallocHost((void**)&zinds_cpu, sizeof(unsigned short)*obs.numz*(pow(2,numharmstages)-1));
 
 
     double rr, subr;
-    double drlo, drhi, harm_fract;
+    double drlo, harm_fract;
     int stage;
     int harmtosum, harm;
     
@@ -1354,26 +1457,25 @@ void get_rind_zind_gpu(unsigned short *d_rinds_gpu, unsigned short *d_zinds_gpu,
     cudaMemcpy(d_rinds_gpu, rinds_cpu, sizeof(unsigned short)*obs.corr_uselen*(pow(2,numharmstages)-1), cudaMemcpyHostToDevice);
     cudaMemcpy(d_zinds_gpu, zinds_cpu, sizeof(unsigned short)*obs.numz*(pow(2,numharmstages)-1), cudaMemcpyHostToDevice);
 
-    cudaFree(rinds_cpu);
-    cudaFree(zinds_cpu);
+    // cudaFree(rinds_cpu);
+    // cudaFree(zinds_cpu);
 }
 
-void *subharm_fderivs_vol_gpu(int numharm, int harmnum, 
-			       double fullrlo, double fullrhi, 
-			       subharminfo *shi, accelobs *obs, cufftComplex *fkern_gpu, cufftComplex *pdata_gpu, cufftComplex *tmpdat_gpu, cufftComplex *tmpout_gpu, float *outpows_gpu, float *outpows_gpu_obs, cufftComplex *pdata, int tip, unsigned short *d_zinds_gpu, unsigned short *d_rinds_gpu, unsigned short *zinds_cpu, unsigned short *rinds_cpu, ffdotpows *fundamental, int **offset_array, int stage, cufftComplex *data_gpu, float *powers)
+
+void *subharm_fderivs_vol_gpu(int numharm, int harmnum, double fullrlo, double fullrhi, subharminfo *shi, accelobs *obs, cufftComplex *fkern_gpu, cufftComplex *pdata_gpu, cufftComplex *tmpdat_gpu, cufftComplex *tmpout_gpu, float *outpows_gpu, float *outpows_gpu_obs, cufftComplex *pdata, int tip, unsigned short *d_zinds_gpu, unsigned short *d_rinds_gpu, unsigned short *zinds_cpu, unsigned short *rinds_cpu, ffdotpows *fundamental, int **offset_array, int stage, cufftComplex *data_gpu, float *powers)
 {
     int ii, numdata, fftlen, binoffset;
     long long lobin;
     float powargr, powargi;
     double drlo, drhi, harm_fract;
-    fcomplex *data;
-
+    static fcomplex *data;
+    static int firsttime = 1;
 
     harm_fract = (double) harmnum / (double) numharm;
     drlo = calc_required_r(harm_fract, fullrlo);
     drhi = calc_required_r(harm_fract, fullrhi);
     long long rlo = (long long) floor(drlo);
-    int zlo = calc_required_z(harm_fract, obs->zlo);
+    // register int zlo = calc_required_z(harm_fract, obs->zlo);
     /* Initialize the lookup indices */
     // if (numharm > 1 && !obs->inmem) {
     //     double rr, subr;
@@ -1407,27 +1509,37 @@ void *subharm_fderivs_vol_gpu(int numharm, int harmnum,
     fftlen = shi->kern[0][0].fftlen;
     lobin = rlo - binoffset;
     numdata = fftlen / ACCEL_NUMBETWEEN;
-    data = get_fourier_amplitudes(lobin, numdata, obs); // the data: done fft
 
+    if(firsttime)
+    {
+        data = malloc(sizeof(fcomplex)*fftlen);
+        firsttime = 0;
+    }
+    // data = get_fourier_amplitudes(lobin, numdata, obs); // the data: done fft
+    get_fourier_amplitudes_gpu(lobin, numdata, obs, data);
+
+
+    cudaMemcpy(data_gpu, data, sizeof(cufftComplex) * numdata, cudaMemcpyHostToDevice);
+    // cudaMemcpy(data_gpu, data, sizeof(cufftComplex)*numdata, cudaMemcpyHostToDevice);
 
     double norm_data;
-    {
-        // default block median normalization
-        for (ii = 0; ii < numdata; ii++)
+    for (ii = 0; ii < numdata; ii++)
             powers[ii] = POWER(data[ii].r, data[ii].i);
-        norm_data = 1.0 / sqrt(median(powers, numdata) / log(2.0));
-    } 
+    norm_data = 1.0 / sqrt(median(powers, numdata) / log(2.0));
+    
+    // 等待所有操作完成
+    // cudaStreamSynchronize(stream_0);
 
-    // Prep, spread, and FFT the data
-    // spread_no_pad(data, fftlen / ACCEL_NUMBETWEEN, pdata, fftlen, ACCEL_NUMBETWEEN);
-
-    cudaMemcpy(data_gpu, (cufftComplex *)data, sizeof(cufftComplex)*numdata, cudaMemcpyHostToDevice);
     // get_power_GPU(data_gpu, numdata, powers);
     // norm_data = 1.0 / sqrt(get_med_gpu(powers, numdata) / log(2.0));
+
     spread_no_pad_gpu(data_gpu, fftlen / ACCEL_NUMBETWEEN, pdata_gpu, fftlen, ACCEL_NUMBETWEEN, norm_data);
+
     // Note COMPLEXFFT is not thread-safe because of wisdom caching
-    // cudaMemcpy(pdata_gpu, (cufftComplex *)pdata, sizeof(cufftComplex)*fftlen, cudaMemcpyHostToDevice);
-    FFTonGPU(pdata_gpu, pdata_gpu, fftlen, 1, -1, plan_pdata_gpu_array[stage][harmnum-1]);
+
+    // FFTonGPU(pdata_gpu, pdata_gpu, fftlen, 1, -1, plan_pdata_gpu_array[stage][harmnum-1]);
+    cufftExecC2C(plan_pdata_gpu_array[stage][harmnum-1], pdata_gpu, pdata_gpu, -1);
+
 
     const float norm = 1.0 / (fftlen * fftlen);
     int offset = binoffset * ACCEL_NUMBETWEEN;
@@ -1441,7 +1553,9 @@ void *subharm_fderivs_vol_gpu(int numharm, int harmnum,
             offs =  offset_array[stage][harmnum-1];
         
         loops_in_GPU_1(pdata_gpu, fkern_gpu+offs ,tmpdat_gpu, fftlen, numzs);
-        FFTonGPU(tmpdat_gpu, tmpout_gpu,fftlen, numzs, +1, plan_tmpdat_gpu_array[stage][harmnum-1]);
+        // FFTonGPU(tmpdat_gpu, tmpout_gpu,fftlen, numzs, +1, plan_tmpdat_gpu_array[stage][harmnum-1]);
+        cufftExecC2C(plan_tmpdat_gpu_array[stage][harmnum-1], tmpdat_gpu, tmpout_gpu, 1);
+
         if(obs->inmem)
             loops_in_GPU_2(tmpout_gpu, outpows_gpu, numrs, numzs,offset, fftlen,norm, outpows_gpu_obs, rlen, rlo*ACCEL_RDR, 1);
         else
@@ -1458,7 +1572,8 @@ void *subharm_fderivs_vol_gpu(int numharm, int harmnum,
             }
         }
     }
-    vect_free(data);
+
+    // vect_free(data);
 }
 
 //----------------------initialize cuFFT plans ----------------------
@@ -1479,7 +1594,8 @@ void init_cuFFT_plans(subharminfo **subharminfs, int numharmstages, int inmem)
 			for (harm = 1; harm < harmtosum; harm += 2) {
 				numkern = subharminfs[stage][harm-1].numkern;
 				fftlen = subharminfs[stage][harm-1].kern[0][0].fftlen;
-				
+
+
 				cufftPlan1d(&plan_pdata_gpu_array[stage][harm-1], fftlen, CUFFT_C2C, 1);		
 				cufftPlan1d(&plan_tmpdat_gpu_array[stage][harm-1], fftlen, CUFFT_C2C, numkern);		
 			}	
@@ -1491,9 +1607,6 @@ void init_cuFFT_plans(subharminfo **subharminfs, int numharmstages, int inmem)
 void destroy_cuFFT_plans(subharminfo **subharminfs, int numharmstages, int inmem)
 {
 	int harm, harmtosum, stage;
-	int numkern, fftlen;
-	numkern = subharminfs[0][0].numkern;
-	fftlen = subharminfs[0][0].kern[0][0].fftlen;
 
 	cufftDestroy(plan_pdata_gpu_array[0][0]);
 	cufftDestroy(plan_tmpdat_gpu_array[0][0]);
@@ -1503,8 +1616,6 @@ void destroy_cuFFT_plans(subharminfo **subharminfs, int numharmstages, int inmem
             harmtosum = 1 << stage;		
             for (harm = 1; harm < harmtosum; harm += 2)
             {
-                numkern = subharminfs[stage][harm-1].numkern;
-                fftlen = subharminfs[stage][harm-1].kern[0][0].fftlen;
                 cufftDestroy(plan_pdata_gpu_array[stage][harm-1]);
                 cufftDestroy(plan_tmpdat_gpu_array[stage][harm-1]);
             }
@@ -1512,6 +1623,10 @@ void destroy_cuFFT_plans(subharminfo **subharminfs, int numharmstages, int inmem
     }
 }
 
+
+
+
+/***********************************************************************************************************************************/
 
 float * prep_result_on_gpu(subharminfo **subharminfs, int numharmstages)
 //cudaMalloc d_result for the whole search process
@@ -1709,32 +1824,34 @@ void inmem_add_ffdotpows(ffdotpows * fundamental, accelobs * obs,
 
 void get_rinds_gpu(ffdotpows * fundamental, int *rinds_gpu, int numharmstages)
 {
+    // printf("Malloc in GPU Done\n"); 
+
     int *rinds_cpu;
-    int *rinds;
-    cudaMallocHost((void**)&rinds_cpu, sizeof(int)*fundamental->numrs*(pow(2,numharmstages)-1));
+    int *rinds_bk;
+    
     int stage;
     const int rlo = fundamental->rlo;
-    // printf("rlo %d \n", rlo);
-    // exit(0);
     const int numrs = fundamental->numrs;
+
+    cudaMallocHost((void**)&rinds_cpu, sizeof(int)*numrs*(pow(2,numharmstages)-1));
 
     int harm;
     int ii, rrint,kk=0;
+
     for (stage = 1; stage < numharmstages; stage++)
     {
         int harmtosum = 1 << stage;
         for (harm = 1; harm < harmtosum; harm += 2)
         {
             const double harm_fract = (double) harm / (double) harmtosum;
-            rinds = rinds_cpu+kk*numrs;
+            rinds_bk = rinds_cpu+kk*numrs;
             for (ii = 0, rrint = ACCEL_RDR * rlo; ii < numrs; ii++, rrint++)
-            // for (ii = 0, rrint = 0; ii < numrs; ii++, rrint++)
-                rinds[ii] = (int) (rrint * harm_fract + 0.5);
+                rinds_bk[ii] = (int) (rrint * harm_fract + 0.5);
             kk++;
-        }   
+        }  
     }
     cudaMemcpy(rinds_gpu, rinds_cpu, sizeof(int)*numrs*(pow(2,numharmstages)-1), cudaMemcpyHostToDevice);
-    cudaFree(rinds_cpu);
+    cudaFreeHost(rinds_cpu);
 }
 
 void inmem_add_subharm_gpu(ffdotpows * fundamental, accelobs * obs, float *outpows_gpu, float *outpows_gpu_obs, int stage, int *rinds_gpu)
@@ -1845,18 +1962,18 @@ GSList *search_ffdotpows(ffdotpows * ffdot, int numharm,
 GSList *search_ffdotpows_sort_gpu_result(ffdotpows * ffdot, int numharm,
                          accelobs * obs, GSList * cands, accel_cand_gpu *cand_gpu_cpu, int nof_cand)
 {
-   int ii, jj;
-   float powcut;
-   long long numindep;
+   register int ii;
+//    register float powcut;
+   register long long numindep;
 
-   powcut = obs->powcut[twon_to_index(numharm)];
+//    powcut = obs->powcut[twon_to_index(numharm)];
    numindep = obs->numindep[twon_to_index(numharm)];	
    
-   float pow, sig;
-   double rr, zz, ww;
+   register float pow, sig;
+   register double rr, zz, ww;
    int added = 0;   
    
-   int rind, zind;
+   register int rind, zind;
    
    if(nof_cand > 0)
    {
@@ -2035,11 +2152,11 @@ void create_accelobs(accelobs * obs, infodata * idata, Cmdline * cmd, int usemma
         filelen = chkfilelen(datfile, sizeof(float));
         if (input_shorts)
             filelen *= 2;
-        if (filelen > 67108864) {       /* Small since we need memory for the templates */
-            printf
-                ("\nThe input time series is too large.  Use 'realfft' first.\n\n");
-            exit(0);
-        }
+        // if (filelen > 67108864) {       /* Small since we need memory for the templates */
+        //     printf
+        //         ("\nThe input time series is too large.  Use 'realfft' first.\n\n");
+        //     exit(0);
+        // }
 
         /* Read the time series into a temporary buffer */
         /* Note:  The padding allows us to search very short time series */
@@ -2291,7 +2408,7 @@ void create_accelobs(accelobs * obs, infodata * idata, Cmdline * cmd, int usemma
     /* Can we perform the search in-core memory? */
     {
         long long memuse;
-        double gb = (double) (1L << 30);
+        // double gb = (double) (1L << 30);
 
         if (cmd->wmaxP) {
             memuse = sizeof(float) * (obs->highestbin + obs->corr_uselen)

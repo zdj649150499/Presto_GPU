@@ -30,6 +30,7 @@ typedef struct plotflags {
 
 typedef struct PREPFOLDINFO {
   double *rawfolds;   /* Raw folds (nsub * npart * proflen points) */
+  double *rawfolds_gpu;   /* Raw folds (nsub * npart * proflen points) */
   double *dms;        /* DMs used in the trials */
   double *periods;    /* Periods used in the trials */
   double *pdots;      /* P-dots used in the trials */
@@ -120,7 +121,7 @@ double phasedelay2fdotdot(double phasedelay, double time);
 void double2float(double *in, float *out, int numpts);
 /* Copy a double vector into a float vector */
 
-void prepfold_plot(prepfoldinfo *in, plotflags *flags, int xwin, float *ppdot);
+void prepfold_plot(prepfoldinfo *in, plotflags *flags, int xwin, float *ppdot, int cudaP);
 /* Make the beautiful 1 page prepfold output */
 
 int bary2topo(double *topotimes, double *barytimes, int numtimes, 
@@ -154,6 +155,8 @@ int cpgnice_output_2(char *out, double val, double err, int len);
 
 void correct_subbands_for_DM(double dm, prepfoldinfo *search,
 			     double *ddprofs, foldstats *ddstats);
+void correct_subbands_for_DM_1(double dm, prepfoldinfo *search,
+			     double *ddprofs, int *dmdelays);
 /* Calculate the DM delays and apply them to the subbands */
 /* to create de-disopersed profiles.                      */
 

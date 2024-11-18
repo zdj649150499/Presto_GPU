@@ -152,6 +152,7 @@ void output_harmonics(GSList *list, accelobs *obs, infodata *idata);
 void free_accelcand(gpointer data, gpointer user_data);
 void print_accelcand(gpointer data, gpointer user_data);
 fcomplex *get_fourier_amplitudes(long long lobin, int numbins, accelobs *obs);
+void  *get_fourier_amplitudes_gpu(long long lobin, int numbins, accelobs * obs, fcomplex *tmpdata);
 ffdotpows *subharm_fderivs_vol(int numharm, int harmnum, 
 			       double fullrlo, double fullrhi, 
 			       subharminfo *shi, accelobs *obs);
@@ -159,9 +160,8 @@ ffdotpows *ini_subharm_fderivs_vol(int numharm, int harmnum,
 			       double fullrlo, double fullrhi, 
 			       subharminfo *shi, accelobs *obs);
 cufftComplex *cp_kernel_array_to_gpu(subharminfo **subharminfs, int numharmstages, int **offset_array);
-void *subharm_fderivs_vol_gpu(int numharm, int harmnum, 
-			       double fullrlo, double fullrhi, 
-			       subharminfo *shi, accelobs *obs, cufftComplex *fkern_gpu, cufftComplex *pdata_gpu, cufftComplex *tmpdat_gpu, cufftComplex *tmpout_gpu, float *outpows_gpu, float *outpows_gpu_obs, cufftComplex *pdata, int tip, unsigned short *zinds_gpu, unsigned short *rinds_gpu, unsigned short *zinds_cpu, unsigned short *rinds_cpu, ffdotpows *fundamental, int **offset_array, int stage, cufftComplex *data_gpu, float *powers);
+void *subharm_fderivs_vol_gpu(int numharm, int harmnum, double fullrlo, double fullrhi, subharminfo *shi, accelobs *obs, cufftComplex *fkern_gpu, cufftComplex *pdata_gpu, cufftComplex *tmpdat_gpu, cufftComplex *tmpout_gpu, float *outpows_gpu, float *outpows_gpu_obs, cufftComplex *pdata, int tip, unsigned short *d_zinds_gpu, unsigned short *d_rinds_gpu, unsigned short *zinds_cpu, unsigned short *rinds_cpu, ffdotpows *fundamental, int **offset_array, int stage, cufftComplex *data_gpu, float *powers);
+
 void init_cuFFT_plans(subharminfo **subharminfs, int numharmstages, int inmem);
 void destroy_cuFFT_plans(subharminfo **subharminfs, int numharmstages, int inmem);
 
@@ -171,7 +171,7 @@ void fund_to_ffdotplane(ffdotpows *ffd, accelobs *obs);
 void inmem_add_ffdotpows(ffdotpows *fundamental, accelobs *obs,
                          int numharm, int harmnum);
 void get_rinds_gpu(ffdotpows * fundamental, int *rinds_gpu, int numharmstages);
-void get_rind_zind_gpu(unsigned short *d_rinds_gpu, unsigned short *d_zinds_gpu, int numharmstages, accelobs obs, double fullrlo);
+void get_rind_zind_gpu(unsigned short *d_rinds_gpu, unsigned short *d_zinds_gpu, unsigned short *rinds_cpu, unsigned short *zinds_cpu, int numharmstages, accelobs obs, double fullrlo);
 void inmem_add_subharm_gpu(ffdotpows * fundamental, accelobs * obs, float *outpows_gpu, float *outpows_gpu_obs, int stage, int *rinds_gpu);
 void fund_to_ffdotplane_trans(ffdotpows *ffd, accelobs *obs);
 void inmem_add_ffdotpows_trans(ffdotpows *fundamental, accelobs *obs,

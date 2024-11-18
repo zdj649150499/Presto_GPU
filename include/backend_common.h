@@ -9,6 +9,8 @@ typedef enum {
 } psrdatatype;
 
 
+
+
 struct spectra_info {
     char telescope[40];     // Telescope used
     char observer[100];     // Observer's name
@@ -87,7 +89,23 @@ struct spectra_info {
     int (*get_rawblock)(float *, struct spectra_info *, int *);  // Raw data block function pointer
     long long (*offset_to_spectra)(long long, struct spectra_info *);  // Shift into file(s) function pointer
     int cudaP;
+    int ncpus;
+
+    FILE *cacheFile;
+    char cacheFileName[1024];
 };
+
+    float *current_scl_c;
+    float *current_offs_c;
+    unsigned char *current_data_c;
+
+    float *current_scl_g;
+    float *current_offs_g;
+    unsigned char *current_data_g;
+
+    float *last_scl_g;
+    float *last_offs_g;
+    unsigned char *last_data_g;
 
 
 /* backend_common.c */
@@ -106,19 +124,34 @@ int read_rawblocks_gpu(float *fdata, int numsubints, struct spectra_info *s,
                    int *padding);
 int read_psrdata(float *fdata, int numspect, struct spectra_info *s, int *delays, int *padding, int *maskchans, int *nummasked, mask *obsmask);
 void get_channel(float chandat[], int channum, int numsubints, float rawdata[], struct spectra_info *s);
+void revertdata(float *chandat, int x, int y, float *rawdata);
 void get_channelbk_avg_var(float *chandat, int numsubints, float *rawdata,
                  struct spectra_info *s, float *mean, float *var, int transpose, int thread);
 void get_channelbk_avg_var_gpu(float *chandat, int numsubints, float *rawdata,
                  struct spectra_info *s, float *mean, float *var, int transpose);
 void get_subband_avg_var(float *chandat, int numsubints, short *rawdata,
                  struct spectra_info *s, float *mean, float *var);
-void get_subband_avg_var_gpu(float *chandat, int numsubints, short *rawdata,
-                 struct spectra_info *s, float *mean, float *var);
-int prep_subbands(float *fdata, float *rawdata, int *delays, int numsubbands, struct spectra_info *s, int transpose, int *maskchans, int *nummasked, mask *obsmask);
-int prep_subbands_GPU(float *fdata, float *rawdata, int *delays, int numsubbands, struct spectra_info *s, int transpose, int *maskchans, int *nummasked, mask *obsmask);
-
-int read_subbands(float *fdata, int *delays, int numsubbands, struct spectra_info *s, int transpose, int *padding, int *maskchans, int *nummasked, mask *obsmask);
-int read_subbands_GPU(float *fdata, int *delays, int numsubbands, struct spectra_info *s, int transpose, int *padding, int *maskchans, int *nummasked, mask *obsmask);
+void get_subband_avg_var_gpu(float *chandat, int numsubints, short *rawdata, struct spectra_info *s, float *mean, float *var, int transpose);
+int prep_subbands(float *fdata, float *rawdata, int *delays, int numsubbands, struct spectra_info *s, int transpose, int *maskchans, int *nummasked, mask *obsmask, int blockN, int thisblock);
+void free_prep_subband_GPU_cache_array();
+int write_prep_subbands_cache(float *fdata, float *rawdata, int *delays, int numsubbands,
+                  struct spectra_info *s, int transpose,
+                  int *maskchans, int *nummasked, mask * obsmask, int blockN, int thisblock, int thread);
+int read_prep_subbands_cache(float *fdata, float *rawdata, int *delays, int numsubbands,
+                  struct spectra_info *s, int transpose,
+                  int *maskchans, int *nummasked, mask * obsmask, int blockN, int thisblock);
+void SclData(float *intputDATA, int x, int y, unsigned char *DATA,float *sclArray, float *offsArray, int thread);
+int prep_subbands_GPU(float *fdata, float *data_gpu, float *lastdata_gpu, float *rawdata, int *delays, int numsubbands, struct spectra_info *s, int transpose, int *maskchans, int *nummasked, mask *obsmask);
+int prep_subbands_GPU_cache(float *fdata, float *data_gpu, float *lastdata_gpu, float *rawdata, int *delays, int numsubbands, struct spectra_info *s, int transpose, int *maskchans, int *nummasked, mask *obsmask);
+int read_subbands(float *fdata, int *delays, int numsubbands, struct spectra_info *s, int transpose, int *padding, int *maskchans, int *nummasked, mask *obsmask, int blockN, int thisblock);
+int read_subbands_GPU(float *fdata, float *data_gpu, float *lastdata_gpu, int *delays, int numsubbands, struct spectra_info *s, int transpose, int *padding, int *maskchans, int *nummasked, mask *obsmask);
+int read_subbands_GPU_cache(float *fdata, float *data_gpu, float *lastdata_gpu, int *delays, int numsubbands, struct spectra_info *s, int transpose, int *padding, int *maskchans, int *nummasked, mask *obsmask);
+int read_subbands_cache(float *fdata, int *delays, int numsubbands,
+                  struct spectra_info *s, int transpose, int *padding,
+                  int *maskchans, int *nummasked, mask * obsmask, int blockN, int thisblock);
+int write_subbands_cache(float *fdata, int *delays, int numsubbands,
+                  struct spectra_info *s, int transpose, int *padding,
+                  int *maskchans, int *nummasked, mask * obsmask, int blockN, int thisblock, int thread);
 void flip_band(float *fdata, struct spectra_info *s);
 int *get_ignorechans(char *ignorechans_str, int minchan, int maxchan, int *num_ignorechans, char **filestr);
 

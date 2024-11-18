@@ -1,7 +1,7 @@
 #  Makefile for PRESTO
 #   by Scott M. Ransom
 
-PRESTO=/home/gpps/pulsar_software/presto_20220214
+PRESTO = /home/gpps/pulsar_software/presto_20220214
 
 # OS type
 OS = Linux
@@ -43,12 +43,12 @@ CUDA_BIN_PATH   ?= $(CUDA_PATH)/bin
 NVCC            ?= $(CUDA_BIN_PATH)/nvcc -O3 -use_fast_math -std=c++11  
 
 #modify it if necessary, for example, if 32-bit machine, -m32
-NVCCFLAGS 			?= -m64 -ccbin clang++
+NVCCFLAGS 			?= -m64 -ccbin g++
 
 EXTRA_NVCCFLAGS ?= -Xcompiler -fPIC
 
 #modify it if necessary, -m64 to -m32 for 32-bit machine
-LINKCOMMAND_CUDA = clang++ -m64 -O3 -o	
+LINKCOMMAND_CUDA = g++ -m64 -O3 -o	
 
 #modify it if necessary, maybe lib64 should be lib32?
 CUDA_LINK_EXTRA_FLAGS = -L $(CUDA_PATH)/lib64 -lcufft  -lcudart
@@ -60,15 +60,14 @@ PNGLINK := $(shell pkg-config --libs libpng)
 
 # Include and link information for PGPLOT v5.X (including shared libs!)
 # Typically you need to have your PGPLOT_DIR environment variable set
-PGPLOT_DIR = /home/gpps/pulsar_software/pgplot_build/
 PGPLOTINC = -I$(PGPLOT_DIR)
-PGPLOTLINK = -L$(PGPLOT_DIR) -lcpgplot -lpgplot $(X11LINK) $(PNGLINK) -lgfortran
+PGPLOTLINK = -L$(PGPLOT_DIR) -lcpgplot -lpgplot $(X11LINK) $(PNGLINK)
 
 # Include and link information for the FFTW 3.X single-precision library
-FFTINC := -I/home/gpps/aocl/4.2.0/aocc/include  #-I$(ASTROSOFT)/include
-FFTLINK := -L/home/gpps/aocl/4.2.0/aocc/lib -lfftw3f #-L$(ASTROSOFT)/lib -lfftw3f
+FFTINC := -I/home/zdj/pulsar_software/include
+FFTLINK := -L/home/zdj/pulsar_software/lib -lfftw3f
 
-# Link line from:-openmp
+# Link line from:
 # https://www.intel.com/content/www/us/en/developer/tools/oneapi/onemkl-link-line-advisor.html
 # MKLROOT := /usr
 # FFTINC := -I${MKLROOT}/include/mkl -DMKL_ILP64
@@ -80,28 +79,26 @@ GLIBINC := $(shell pkg-config --cflags glib-2.0)
 GLIBLINK := $(shell pkg-config --libs glib-2.0)
 
 # Include and link information for CFITSIO
-CFITSIOINC := -I/home/gpps/pulsar_software/include
-CFITSIOLINK := -L/home/gpps/pulsar_software/lib -lcfitsio
+CFITSIOINC := -I/home/zdj/pulsar_software/include
+CFITSIOLINK := -L/home/zdj/pulsar_software/lib -lcfitsio
 
 # The standard PRESTO libraries to link into executables
-PRESTOLINK = $(CFITSIOLINK) -L$(PRESTO)/lib -lpresto-amd $(FFTLINK) $(CUDA_LINK_EXTRA_FLAGS) -lstdc++
+PRESTOLINK = $(CFITSIOLINK) -L$(PRESTO)/lib -lpresto $(FFTLINK) $(CUDA_LINK_EXTRA_FLAGS) -L $(SYSDIR)/lib/x86_64-linux-gnu -lstdc++
 
-CC = clang -fcommon 
+CC = gcc -Ofast -fcommon -msse2 -mssse3 -mavx -mavx2 -mavx512f -mprefer-vector-width=512 -mno-avx256-split-unaligned-store -mno-avx256-split-unaligned-load -mno-prefer-avx128 -mfma -march=native -malign-double  
 #CC = clang-3.6
-FC = flang #  -lpng -lz 
+FC = gfortran -O3 
 
 # Set this to true if you want to use OpenMP.  false otherwise
 USEOPENMP = true
 
 # Set this to true if you want to profile.
-USEPROFILE = false # false
+USEPROFILE = false
 
 # Very recent Intel CPUs might see a few percent speedup using -mavx
-CFLAGS = -I$(PRESTO)/include $(GLIBINC) $(CFITSIOINC) $(PGPLOTINC) $(FFTINC) $(CUDA_INC_PATH)\
-	-DUSEMMAP -D_LARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64 \
-	-Wall -fPIC -Ofast /home/gpps/pulsar_software/aocc-compiler-4.2.0/lib/libamdlibm.a -lm \
-        -march=native -mprefer-vector-width=512 -funroll-loops 
-	
+CFLAGS = -I$(PRESTO)/include $(GLIBINC) $(CFITSIOINC) $(PGPLOTINC) $(FFTINC) $(CUDA_INC_PATH) \
+	-Wall -W -fPIC -Ofast \
+	-DUSEMMAP -D_LARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64 
 # CLINKFLAGS = $(CFLAGS) -Wl,-rpath,$(PRESTO)/lib
 
 # If you are getting errors running the test code for the Python PRESTO parts
@@ -115,34 +112,26 @@ ifeq ($(CC),gcc)
 	CFLAGS += -Wno-unused-result -Wno-unused-but-set-variable \
 		-Wno-unused-but-set-parameter
 # The following is great as long as your GCC is > v 4.9
-	CFLAGS += -fdiagnostics-color=auto
-# For icx 
-else 
-    CFLAGS += -Ofast -mfpmath=sse -fma \
-		      -fno-finite-math-only -fno-delayed-template-parsing -fdiagnostics-color=auto -funroll-loops 
-#   -Wno-unused-result -Wno-unused-but-set-variable -Wno-unused-but-set-parameter -Wno-deprecated-non-prototype 
-# 
-# -fp-model=precise
-# -ffp-model=precise
+	CFLAGS += -fdiagnostics-color=auto 
 endif
 
 # NOTE:  Be careful of upping the optimization on the
 #        FFLAGs.  Certain compilers (i.e. on Intel Macs) will
 #        cause errors for the code in least_squares.f
-FFLAGS = -fPIC -O3
+FFLAGS = -fPIC
 FLINKFLAGS = $(FFLAGS) -Wl,-rpath,$(PRESTO)/lib
 
 # Add flags we need for openmp
 ifeq ($(USEOPENMP),true)
-	ifeq ($(CC),icx)
-		OMPFLAGS = -fiopenmp  ## -qopenmp ## -qopenmp-simd
-		CFLAGS += $(OMPFLAGS) 
-		FLINKFLAGS += $(OMPFLAGS) -O3 -nofor-main -align array64byte -nostandard-realloc-lhs -m64
+	ifeq ($(CC),icc)
+		OMPFLAGS = -openmp
+		CFLAGS += $(OMPFLAGS)
+		FLINKFLAGS += $(OMPFLAGS)
 # for GCC and clang
 	else
 		OMPFLAGS = -fopenmp
-		CFLAGS += $(OMPFLAGS) -march=native 
-		FLINKFLAGS += $(OMPFLAGS) -O3 -march=native 
+		CFLAGS += $(OMPFLAGS)
+		FLINKFLAGS += $(OMPFLAGS)
 	endif
 endif
 
@@ -153,13 +142,14 @@ ifeq ($(USEPROFILE),true)
 	LIBSUFFIX = .a
 endif
 
-CLINKFLAGS = $(CFLAGS) -Wl,-rpath,$(PRESTO)/lib
-
 ifeq ($(LIBSUFFIX),.so)
 	LINKCOMMAND = $(CC) $(LIBCMD) $(OMPFLAGS) $(FFTLINK) -o
 else
 	LINKCOMMAND = ar rcs
 endif
+
+
+CLINKFLAGS = $(CFLAGS) -Wl,-rpath,$(PRESTO)/lib
 
 # Add to the search path for the executables
 VPATH = ../lib:../bin
@@ -228,7 +218,7 @@ timetest:
 libpresto: libpresto$(LIBSUFFIX)
 
 libpresto$(LIBSUFFIX): $(PRESTOOBJS)
-	$(LINKCOMMAND) $(PRESTO)/lib/$@ $(PRESTOOBJS)
+	$(LINKCOMMAND) $(PRESTO)/lib/$@ $(PRESTOOBJS) 
 
 slalib: libsla$(LIBSUFFIX)
 	cd slalib ; $(FC) -o sla_test sla_test.f -fno-second-underscore -L$(PRESTO)/lib -lsla
@@ -289,19 +279,19 @@ split_parkes_beams: split_parkes_beams.o
 	$(CC) $(CLINKFLAGS) -o $(PRESTO)/bin/$@ split_parkes_beams.o
 
 rfifind: rfifind_cmd.c rfifind_cmd.o rfifind.o rfi_utils.o rfifind_plot.o cuda.o $(INSTRUMENTOBJS) $(PLOT2DOBJS)  libpresto
-	$(FC) $(FLINKFLAGS) -o $(PRESTO)/bin/$@  $(INSTRUMENTOBJS) $(PLOT2DOBJS) rfifind.o rfi_utils.o rfifind_cmd.o rfifind_plot.o cuda.o $(PRESTOLINK) $(PGPLOTLINK)  $(CUDA_LINK_EXTRA_FLAGS) 
+	$(FC) $(FLINKFLAGS) -o $(PRESTO)/bin/$@  $(INSTRUMENTOBJS) $(PLOT2DOBJS) rfifind.o rfi_utils.o rfifind_cmd.o rfifind_plot.o cuda.o $(PRESTOLINK) $(PGPLOTLINK) -lcfitsio -lm $(CUDA_LINK_EXTRA_FLAGS) 
 
 prepdata: prepdata_cmd.c prepdata_cmd.o prepdata.o $(INSTRUMENTOBJS) libpresto
-	$(CC) $(CLINKFLAGS) -o $(PRESTO)/bin/$@ prepdata.o prepdata_cmd.o $(INSTRUMENTOBJS) $(PRESTOLINK) 
+	$(CC) $(CLINKFLAGS) -o $(PRESTO)/bin/$@ prepdata.o prepdata_cmd.o $(INSTRUMENTOBJS) $(PRESTOLINK) -lcfitsio -lm
 
 prepcache: prepsubband_cmd.c prepsubband_cmd.o prepcache.o cuda.o $(INSTRUMENTOBJS) libpresto
-	$(CC) $(CLINKFLAGS) $(OMPFLAGS) -o $(PRESTO)/bin/$@ prepcache.o prepsubband_cmd.o cuda.o $(INSTRUMENTOBJS) $(PRESTOLINK)  $(CUDA_LINK_EXTRA_FLAGS) $(CUDA_LINK_EXTRA_FLAGS) 
+	$(CC) $(CLINKFLAGS) -o $(PRESTO)/bin/$@ prepcache.o prepsubband_cmd.o cuda.o $(INSTRUMENTOBJS) $(PRESTOLINK) -lcfitsio -lm -lglib-2.0 $(CUDA_LINK_EXTRA_FLAGS) $(CUDA_LINK_EXTRA_FLAGS)
 
 prepsubband: prepsubband_cmd.c prepsubband_cmd.o prepsubband.o  cuda.o $(INSTRUMENTOBJS) libpresto
-	$(CC) $(CLINKFLAGS) $(OMPFLAGS) -o $(PRESTO)/bin/$@ prepsubband.o prepsubband_cmd.o cuda.o $(INSTRUMENTOBJS) $(PRESTOLINK)  $(CUDA_LINK_EXTRA_FLAGS) $(CUDA_LINK_EXTRA_FLAGS) 
+	$(CC) $(CLINKFLAGS) -o $(PRESTO)/bin/$@ prepsubband.o prepsubband_cmd.o cuda.o $(INSTRUMENTOBJS) $(PRESTOLINK) -lcfitsio -lm -lglib-2.0 $(CUDA_LINK_EXTRA_FLAGS) $(CUDA_LINK_EXTRA_FLAGS)
 
 prepfold: prepfold_cmd.c prepfold_cmd.o prepfold.o prepfold_utils.o prepfold_plot.o least_squares.o polycos.o readpar.o cuda.o $(INSTRUMENTOBJS) $(PLOT2DOBJS) libpresto
-	$(FC) $(FLINKFLAGS) -o $(PRESTO)/bin/$@ prepfold.o prepfold_utils.o prepfold_plot.o prepfold_cmd.o least_squares.o polycos.o readpar.o cuda.o $(PLOT2DOBJS) $(INSTRUMENTOBJS) $(LAPACKLINK) $(PRESTOLINK) $(PGPLOTLINK)  $(CUDA_LINK_EXTRA_FLAGS) 
+	$(FC) $(FLINKFLAGS) -o $(PRESTO)/bin/$@ prepfold.o prepfold_utils.o prepfold_plot.o prepfold_cmd.o least_squares.o polycos.o readpar.o cuda.o $(PLOT2DOBJS) $(INSTRUMENTOBJS) $(LAPACKLINK) $(PRESTOLINK) $(PGPLOTLINK) -lcfitsio -lm -lglib-2.0 $(CUDA_LINK_EXTRA_FLAGS) 
 
 dump_spigot_zerolag: dump_spigot_zerolag.o spigot.o libpresto
 	$(CC) $(CLINKFLAGS) -o $(PRESTO)/bin/$@ dump_spigot_zerolag.o spigot.o $(PRESTOLINK) -lm
@@ -343,7 +333,7 @@ quicklook: quicklook.o libpresto
 	$(CC) $(CLINKFLAGS) -o $(PRESTO)/bin/$@ quicklook.o $(PRESTOLINK) -lm
 
 readfile: readfile_cmd.c readfile_cmd.o readfile.o $(READFILEOBJS) libpresto
-	$(CC) $(CLINKFLAGS) -o $(PRESTO)/bin/$@ readfile.o readfile_cmd.o $(READFILEOBJS) $(PRESTOLINK) 
+	$(CC) $(CLINKFLAGS) -o $(PRESTO)/bin/$@ readfile.o readfile_cmd.o $(READFILEOBJS) $(PRESTOLINK) -lcfitsio -lm
 
 realfft: realfft_cmd.c realfft_cmd.o realfft.o libpresto
 	$(CC) $(CLINKFLAGS) -o $(PRESTO)/bin/$@ realfft.o realfft_cmd.o $(PRESTOLINK) -lm
