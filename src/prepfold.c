@@ -1781,29 +1781,7 @@ int main(int argc, char *argv[])
 
             int *dmdelays_subband_int = malloc(sizeof(int)*search.nsub);
 
-            for (ii = 0; ii < search.npart; ii++) {
-                // initialize_foldstats(&(outprofstats[ii]));
-                ddstats[ii].numdata = 0.0;       /* Number of data bins folded         */
-                ddstats[ii].data_avg = 0.0;      /* Average level of the data bins     */
-                ddstats[ii].data_var = 0.0;      /* Variance of the data bins          */
-                ddstats[ii].numprof = 0.0;       /* Number of bins in the profile      */
-                ddstats[ii].prof_avg = 0.0;      /* Average level of the profile bins  */
-                ddstats[ii].prof_var = 0.0;      /* Variance of the profile bins       */
-                ddstats[ii].redchi = 0.0;        /* Reduced chi-squared of the profile */
-                ddstats[ii].numprof = search.stats[0].numprof;
-            }
-
-            for (ii = 0; ii < search.npart; ii++) { /* Step through parts */
-                int statindex = ii * search.nsub;
-                ddstats[ii].numdata += search.stats[statindex].numdata;
-                for (jj = 0; jj < search.nsub; jj++) {  /* Step through subbands */
-                    /* Update the foldstats */
-                    ddstats[ii].data_avg += search.stats[statindex + jj].data_avg;
-                    ddstats[ii].data_var += search.stats[statindex + jj].data_var;
-                    ddstats[ii].prof_avg += search.stats[statindex + jj].prof_avg;
-                    ddstats[ii].prof_var += search.stats[statindex + jj].prof_var;
-                }
-            }
+            
 
 
             if(cmd->cudaP && cmd->nsub > 1)
@@ -1813,6 +1791,31 @@ int main(int argc, char *argv[])
                 //       && psearchP or pdsearchP, && big data of (numtrials*numtrials)>(65*129)
 
                 printf("Loop in GPU\n");
+                
+                for (ii = 0; ii < search.npart; ii++) {
+                    // initialize_foldstats(&(outprofstats[ii]));
+                    ddstats[ii].numdata = 0.0;       /* Number of data bins folded         */
+                    ddstats[ii].data_avg = 0.0;      /* Average level of the data bins     */
+                    ddstats[ii].data_var = 0.0;      /* Variance of the data bins          */
+                    ddstats[ii].numprof = 0.0;       /* Number of bins in the profile      */
+                    ddstats[ii].prof_avg = 0.0;      /* Average level of the profile bins  */
+                    ddstats[ii].prof_var = 0.0;      /* Variance of the profile bins       */
+                    ddstats[ii].redchi = 0.0;        /* Reduced chi-squared of the profile */
+                    ddstats[ii].numprof = search.stats[0].numprof;
+                }
+
+                for (ii = 0; ii < search.npart; ii++) { /* Step through parts */
+                    int statindex = ii * search.nsub;
+                    ddstats[ii].numdata += search.stats[statindex].numdata;
+                    for (jj = 0; jj < search.nsub; jj++) {  /* Step through subbands */
+                        /* Update the foldstats */
+                        ddstats[ii].data_avg += search.stats[statindex + jj].data_avg;
+                        ddstats[ii].data_var += search.stats[statindex + jj].data_var;
+                        ddstats[ii].prof_avg += search.stats[statindex + jj].prof_avg;
+                        ddstats[ii].prof_var += search.stats[statindex + jj].prof_var;
+                    }
+                }
+
 
                 int *dmdelays_subband_int_gpu;
                 double *search_dms_gpu;
