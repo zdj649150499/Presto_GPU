@@ -1,5 +1,28 @@
 # PRESTO
 
+This is a GPU version of PRESTO that created by DeJiang Zhou at NAOC (zdj649150499@163.com).
+
+In this version, `prepsubband` ,`accelsearch`, and `prepfold` can work with the option `-cuda` on a GPU device.
+
+We added a new `prepcache`, which can generate an cache file and  greatly accelerate the speed of `prepsubband` and `prepfold`.
+
+Using `accelsearchlist1` or `accelsearchlistm` to process`.dat.list` files can save a lot of memory processing time.
+
+
+
+Note that the GPU version of `accelsearch` references `presto_on_gpu_ljt` and it cannot yet do `jerk` searches, i.e. it cannot be used with `-wmax`.
+Something of `rfifind` have also been changed and the GPU version of `prepfold` will reported in the future.
+
+The original CPU version is: http://www.cv.nrao.edu/~sransom/presto/
+
+`presto_on_gpu_ljt` version: https://github.com/jintaoluo/presto_on_gpu
+
+
+
+
+
+=========================================================================================================
+
 Presto_GPU_v2.1
 
 Update `rfifind`, `prepsubband`, `accensearch`, `prepfold`.
@@ -82,16 +105,6 @@ $ prepfold -cuda 0 -accelcand 1 -accelfile cccccc_ACCEL_0.cand -dm 211.7 -mask b
 ------
 
 
-
-This is a GPU version of PRESTO that created by DeJiang Zhou at NAOC.
-
-In this version, `prepsubband` and `accelsearch` can work with the option `-cuda` on a GPU device.
-Note that the GPU version of `accelsearch` references `presto_on_gpu_ljt` and it cannot yet do `jerk` searches, i.e. it cannot be used with `-wmax`.
-Something of `rfifind` have also been changed and the GPU version of `prepfold` will reported in the future.
-
-The original CPU version is: http://www.cv.nrao.edu/~sransom/presto/
-
-`presto_on_gpu_ljt` version: https://github.com/jintaoluo/presto_on_gpu
 
 PRESTO is a large suite of pulsar search and analysis software developed
 primarily by Scott Ransom mostly from scratch, and released under the GPL (v2).
