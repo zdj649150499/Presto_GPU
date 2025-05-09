@@ -1781,9 +1781,6 @@ int main(int argc, char *argv[])
 
             int *dmdelays_subband_int = malloc(sizeof(int)*search.nsub);
 
-            
-
-
             if(cmd->cudaP && cmd->nsub > 1)
             // if(cmd->cudaP && cmd->nsub > 1 && (!cmd->nopsearchP || !cmd->nopdsearchP) && (numtrials*numtrials)>(65*129))
             {  
@@ -1791,7 +1788,7 @@ int main(int argc, char *argv[])
                 //       && psearchP or pdsearchP, && big data of (numtrials*numtrials)>(65*129)
 
                 printf("Loop in GPU\n");
-                
+
                 for (ii = 0; ii < search.npart; ii++) {
                     // initialize_foldstats(&(outprofstats[ii]));
                     ddstats[ii].numdata = 0.0;       /* Number of data bins folded         */

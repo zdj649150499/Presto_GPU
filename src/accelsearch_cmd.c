@@ -28,8 +28,12 @@ static Cmdline cmd = {
     /* ncpusC = */ 1,
   /***** -cuda: Number of processors to use with CUDA */
   /* cudaP = */ 0,
-  /* cudas = */ 0,
-  /* cudasC = */ 0,
+  /* cuda = */ 0,
+  /* cudaC = */ 0,
+  /***** -gput: set t number for t*data calculate in GPU device at onece */
+  /* gpuP = */ 0,
+  /* gpu = */ 1,
+  /* gpuC = */ 0,
   /***** -lobin: The first Fourier frequency in the data file */
     /* lobinP = */ 1,
     /* lobin = */ 0,
@@ -88,7 +92,11 @@ static Cmdline cmd = {
     /* noharmpolishP = */ 0,
   /***** -noharmremove: Do not remove harmonically related candidates (never removed for numharm = 1) */
     /* noharmremoveP = */ 0,
-  /***** uninterpreted rest of command line */
+  /* -list: input a .dat/.fft list file*/
+  /* listP = */ 0,
+  /* listnum = */ 0,   
+  /* datalist */ (char **) 0,
+    /***** uninterpreted rest of command line */
     /* argc = */ 0,
     /* argv = */ (char **) 0,
   /***** the original command line concatenated */
@@ -839,6 +847,17 @@ void showOptionValues(void)
         printf("  value = `%d'\n", cmd.cuda);
         }
     }
+    
+    if( !cmd.gpuP ) {
+        printf("-gput not found.\n");
+    } else {
+        printf("-gput found:\n");
+        if( !cmd.gpuC ) {
+        printf("  no values\n");
+        } else {
+        printf("  value = `%d'\n", cmd.gpu);
+        }
+    }
   /***** -lobin: The first Fourier frequency in the data file */
     if (!cmd.lobinP) {
         printf("-lobin not found.\n");
@@ -1028,6 +1047,13 @@ void showOptionValues(void)
         }
         printf("\n");
     }
+
+    /* -list: input a .dat/.fft list file*/
+    if (!cmd.listP) {
+        printf("-list not found.\n");
+    } else {
+        printf("-list found:\n");
+    }
 }
 
 /**********************************************************************/
@@ -1035,7 +1061,7 @@ void showOptionValues(void)
 void usage(void)
 {
     fprintf(stderr, "%s",
-            "   [-ncpus ncpus] [-lobin lobin] [-numharm numharm] [-zmax zmax] [-wmax wmax] [-sigma sigma] [-rlo rlo] [-rhi rhi] [-flo flo] [-fhi fhi] [-inmem] [-photon] [-median] [-locpow] [-zaplist zaplist] [-baryv baryv] [-otheropt] [-noharmpolish] [-noharmremove] [--] infile ...\n");
+            "   [-ncpus ncpus] [-lobin lobin] [-numharm numharm] [-zmax zmax] [-wmax wmax] [-sigma sigma] [-rlo rlo] [-rhi rhi] [-flo flo] [-fhi fhi] [-inmem] [-photon] [-median] [-locpow] [-zaplist zaplist] [-baryv baryv] [-otheropt] [-noharmpolish] [-noharmremove] [-list] [--] infile ...\n");
     fprintf(stderr, "%s",
             "      Search an FFT or short time series for pulsars using a Fourier domain acceleration search with harmonic summing.\n");
     fprintf(stderr, "%s",
@@ -1045,6 +1071,9 @@ void usage(void)
     fprintf(stderr, "%s","            -cuda: to run prepsubband on GPU, indicate the index of cuda device to be used, 0 means the 1st cuda device (nsub will set to numchannel of file, subchan de-disper will not usefull) \n");
     fprintf(stderr, "%s","                   1 int value between 0 and oo\n");
     fprintf(stderr, "%s","                   default: `0'\n");
+    fprintf(stderr, "%s","            -gput: Set t number for t*data series calculate in GPU device at onece\n");
+    fprintf(stderr, "%s","                   1 int value between 1 and oo\n");
+    fprintf(stderr, "%s","                   default: `1', only do in accelsearchlist1/accelsearchlistm\n");
     fprintf(stderr, "%s",
             "           -lobin: The first Fourier frequency in the data file\n");
     fprintf(stderr, "%s", "                   1 int value between 0 and oo\n");
@@ -1100,7 +1129,9 @@ void usage(void)
     fprintf(stderr, "%s",
             "    -noharmremove: Do not remove harmonically related candidates (never removed for numharm = 1)\n");
     fprintf(stderr, "%s",
-            "           infile: Input file name(s) of the floating point .fft or .[s]dat file(s).  '.inf' file(s) of the same name must also exist\n");
+            "            -list: A .dat/.fft list file (just for accelsearchlist1/accelsearchlistm)\n");
+    fprintf(stderr, "%s",
+            "           infile: Input file name(s) of the floating point .fft or .[s]dat file(s).  '.inf' file(s) of the same name must also exist (just for accelsearch)\n");
     fprintf(stderr, "%s", "                   1...16384 values\n");
     fprintf(stderr, "%s", "  version: 09Jul20\n");
     fprintf(stderr, "%s", "  ");
@@ -1131,13 +1162,21 @@ Cmdline *parseCmdline(int argc, char **argv)
         }
 
         if( 0==strcmp("-cuda", argv[i]) ) {
-        int keep = i;
-        cmd.cudaP = 1;
-        i = getIntOpt(argc, argv, i, &cmd.cuda, 1);
-        cmd.cudaC = i-keep;
-        // checkIntHigher("-ncpus", &cmd.ncpus, cmd.ncpusC, 1);
-        checkIntLower("-cuda", &cmd.cuda, cmd.cudaC, 128);
-        continue;
+            int keep = i;
+            cmd.cudaP = 1;
+            i = getIntOpt(argc, argv, i, &cmd.cuda, 1);
+            cmd.cudaC = i-keep;
+            // checkIntHigher("-ncpus", &cmd.ncpus, cmd.ncpusC, 1);
+            checkIntLower("-cuda", &cmd.cuda, cmd.cudaC, 128);
+            continue;
+        }
+        if (0 == strcmp("-gput", argv[i])) {
+            int keep = i;
+            cmd.gpuP = 1;
+            i = getIntOpt(argc, argv, i, &cmd.gpu, 1);
+            cmd.gpuC = i - keep;
+            checkIntHigher("-ncpus", &cmd.gpu, cmd.gpuC, 1);
+            continue;
         }
 
         if (0 == strcmp("-lobin", argv[i])) {
@@ -1275,6 +1314,11 @@ Cmdline *parseCmdline(int argc, char **argv)
 
         if (0 == strcmp("-noharmremove", argv[i])) {
             cmd.noharmremoveP = 1;
+            continue;
+        }
+        if (0 == strcmp("-list", argv[i])) {
+            cmd.listP = 1;
+            cmd.listnum = 0;
             continue;
         }
 

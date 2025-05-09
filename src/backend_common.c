@@ -1511,7 +1511,7 @@ void SclData(float *intputDATA, int x, int y, unsigned char *DATA,float *sclArra
 // #endif
 #ifdef _OPENMP
 // #pragma omp parallel for default(shared)
-#pragma omp parallel for num_threads(thread) shared(DATA, sclArray, offsArray)
+#pragma omp parallel for num_threads(thread) shared(intputDATA, DATA, sclArray, offsArray)
 #endif
   for(i=0; i<y; i++)
   {

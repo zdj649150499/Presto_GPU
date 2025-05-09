@@ -250,6 +250,8 @@ int main(int argc, char *argv[])
             cudaMalloc((void**)&d_zinds_gpu, sizeof(unsigned short)*obs.numz*(pow(2,obs.numharmstages)-1));
             cudaMallocHost((void**)&d_rinds_cpu, sizeof(unsigned short)*obs.corr_uselen*(pow(2,obs.numharmstages)-1));
             cudaMallocHost((void**)&d_zinds_cpu, sizeof(unsigned short)*obs.numz*(pow(2,obs.numharmstages)-1));
+            // d_rinds_cpu = malloc(sizeof(unsigned short)*obs.corr_uselen*(pow(2,obs.numharmstages)-1));
+            // d_zinds_cpu = malloc(sizeof(unsigned short)*obs.numz*(pow(2,obs.numharmstages)-1));
 
             offset_array = (int **)malloc(obs.numharmstages * sizeof(int *));
             offset_array[0] = (int *)malloc( 1 * sizeof(int) );
@@ -380,13 +382,13 @@ int main(int argc, char *argv[])
                 free(fundamental);
             startr = nextr;
         }
-
         print_percent_complete(obs.highestbin - obs.rlo,
                                obs.highestbin - obs.rlo, "search", 0);
     }
     if(cmd->cudaP)
     {
         cudaFree(outpows_gpu);
+        CUDA_CHECK(cudaGetLastError());
         if(cmd->inmemP)
         {
             cudaFree(outpows_gpu_obs);
@@ -398,20 +400,30 @@ int main(int argc, char *argv[])
         cudaFree(pdata_gpu); 
         cudaFree(tmpdat_gpu);
         cudaFree(fkern_gpu);
-        
-        
+        CUDA_CHECK(cudaGetLastError());
+
+        // if(obs.mmap_file || obs.dat_input)
+        //     cudaFree(obs.fft_gpu-ACCEL_PADDING/2);
+
+
         cudaFree(cand_array_search_gpu);
 	    // cudaFree(cand_array_sort_gpu);
         
         cudaFreeHost(cand_gpu_cpu);
+        CUDA_CHECK(cudaGetLastError());
         if(!cmd->inmemP)
         {
             cudaFree(d_zinds_gpu);
+            CUDA_CHECK(cudaGetLastError());
             cudaFree(d_rinds_gpu);
+            CUDA_CHECK(cudaGetLastError());
             cudaFreeHost(d_zinds_cpu);
+            CUDA_CHECK(cudaGetLastError());
             cudaFreeHost(d_rinds_cpu);
+            CUDA_CHECK(cudaGetLastError());
             free(offset_array);
         }
+        CUDA_CHECK(cudaGetLastError());
         destroy_cuFFT_plans(subharminfs, obs.numharmstages, obs.inmem);
 
         // cudaStreamDestroy(stream_1);
@@ -422,8 +434,20 @@ int main(int argc, char *argv[])
     printf("\n\nDone searching.  Now optimizing each candidate.\n\n");
     free_subharminfos(&obs, subharminfs);
 
+    printf("\nTiming summary:\n");
+    tott = times(&runtimes) / (double) CLK_TCK - tott;
+    utim = runtimes.tms_utime / (double) CLK_TCK;
+    stim = runtimes.tms_stime / (double) CLK_TCK;
+    ttim = utim + stim;
+    printf("    CPU time: %.3f sec (User: %.3f sec, System: %.3f sec)\n",
+           ttim, utim, stim);
+    printf("  Total time: %.3f sec\n\n", tott);
+
     {                           /* Candidate list trimming and optimization */
         int numcands = g_slist_length(cands);
+        printf("\nFound %d cands\n", numcands);
+
+
         GSList *listptr;
         accelcand *cand;
         fourierprops *props;

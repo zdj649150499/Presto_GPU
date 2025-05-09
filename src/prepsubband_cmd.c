@@ -122,6 +122,8 @@ static Cmdline cmd = {
   /* ignorechanstrC = */ 0,
   /***** -cache: Read/Write data from cache */
   /* cacheP = */ 0,
+  /***** -outlist: Write a list of the .dat files */
+  /* outlistP = */ 0,
   /***** uninterpreted rest of command line */
   /* argc = */ 0,
   /* argv = */ (char**)0,
@@ -1146,7 +1148,14 @@ showOptionValues(void)
     printf("-cache found:\n");
   }
 
-
+  
+  /***** -outlist: Write a list of the .dat files */
+  if( !cmd.outlistP ) {
+    printf("-outlist not found.\n");
+  } else {
+    printf("-outlist found:\n");
+  }
+  
   if( !cmd.argc ) {
     printf("no remaining parameters in argv\n");
   } else {
@@ -1228,6 +1237,8 @@ usage(void)
   fprintf(stderr,"%s","                 1 char* value\n");
   fprintf(stderr,"%s","         -cache: Read/Write data from/to a cache file (read for 'prepsubband' and 'prepfold', write for 'prepcache')\n");
   fprintf(stderr,"%s","                 default: not do this ('***filename_cac' or '***fileneme_cac0' for 0DM)\n");
+  fprintf(stderr,"%s","       -outlist: Write a list of the .dat files\n");
+  fprintf(stderr,"%s","                 default: not do this ('***filename_DMdmlow.dat.list')\n");
   fprintf(stderr,"%s","         infile: Input data file name.  If the data is not in a known raw format, it should be a single channel of single-precision floating point data.  In this case a '.inf' file with the same root filename must also exist (Note that this means that the input data file must have a suffix that starts with a period)\n");
   fprintf(stderr,"%s","                 1...16384 values\n");
   fprintf(stderr,"%s","  version: 28Jun17\n");
@@ -1486,6 +1497,11 @@ parseCmdline(int argc, char **argv)
 
     if( 0==strcmp("-cache", argv[i]) ) {
       cmd.cacheP = 1;
+      continue;
+    }
+
+    if( 0==strcmp("-outlist", argv[i]) ) {
+      cmd.outlistP = 1;
       continue;
     }
 

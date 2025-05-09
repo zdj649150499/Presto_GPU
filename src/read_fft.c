@@ -136,3 +136,48 @@ float *read_float_file(FILE * file, long firstpt, long numpts)
     chkfread(fptr, sizeof(float), numpts - lesspad, file);
     return result;
 }
+
+float *read_float_file_list(FILE * file, long firstpt, long numpts, float *result)
+/* Return a float vector with complex data taken from a file.     */
+/* Argumants:                                                     */
+/*   'file' is a pointer to the file you want to access.          */
+/*   'firstpt' is the number of the first point to get. (0 = 1st  */
+/*       point in the file).  If < 0, the resulting array will    */
+/*       be zero padded.                                          */
+/*   'numpts' is the number of points to get from the file.       */
+/*       If the number of bins to read takes us past the end of   */
+/*       file, the returned vector will be zero padded.           */
+{
+    long ii, startpt = 0, lesspad = 0;
+    float *fptr = NULL;
+
+    if (numpts < 0) {
+        printf("\n\n numpts = %ld (out-of-bounds) in read_float_file().", numpts);
+        printf("  Exiting.\n\n");
+        exit(1);
+    }
+
+    /* Allocate the result array */
+
+    // result = gen_fvect(numpts);
+    for (ii = 0; ii < numpts; ii++)
+        result[ii] = 0.0;
+
+    /* Zero pad if we try to read before the beginning of the file */
+
+    if (firstpt < 0) {
+        fptr = result + labs(firstpt);
+        lesspad = labs(firstpt);
+        startpt = 0;
+    } else {
+        fptr = result;
+        startpt = firstpt;
+        lesspad = 0;
+    }
+
+    /* Position and read the data */
+
+    chkfileseek(file, startpt, sizeof(float), SEEK_SET);
+    chkfread(fptr, sizeof(float), numpts - lesspad, file);
+    // return result;
+}

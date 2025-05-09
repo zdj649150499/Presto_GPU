@@ -79,10 +79,24 @@ typedef struct accelobs{
     FILE *fftfile;       /* The FFT file that we are analyzing */
     FILE *workfile;      /* A text file with candidates as they are found */
     fcomplex *fft;       /* A pointer to the FFT for MMAPing or input time series */
+    fcomplex *fft_gpu;       /* A pointer to the FFT for MMAPing or input time series in GPU */
     char *rootfilenm;    /* The root filename for associated files. */
     char *candnm;        /* The fourierprop save file for the fundamentals */
     char *accelnm;       /* The filename of the final candidates in text */
     char *workfilenm;    /* The filename of the working candidates in text */
+
+    int listnum;       /* The number in the listfile*/
+    FILE *listfile;         /* The file handle for the accel list file */
+    FILE **fftfilelist;       /* The FFT file that we are analyzing */
+    FILE **workfilelist;      /* A text file with candidates as they are found */
+    fcomplex **fftlist;       /* A pointer to the FFT for MMAPing or input time series */
+    float **fftlist_f;       /* A pointer to the FFT for MMAPing or input time series */
+
+    char **rootfilenmlist;    /* The root filename for associated files. */
+    char **candnmlist;        /* The fourierprop save file for the fundamentals */
+    char **accelnmlist;       /* The filename of the final candidates in text */
+    char **workfilenmlist;    /* The filename of the working candidates in text */
+    int gpu;
     int use_harmonic_polishing; /* Should we force harmonics to be related */
 } accelobs;
 
@@ -142,17 +156,33 @@ subharminfo **create_subharminfos(accelobs *obs);
 void free_subharminfos(accelobs *obs, subharminfo **shis);
 void create_accelobs(accelobs *obs, infodata *idata, 
 		     Cmdline *cmd, int usemmap);
+void create_accelobs_list(accelobs *obs, infodata *idata, 
+		     Cmdline *cmd, int usemmap, int thread, int kk, int readdatanum);
+void create_accelobs_list_1(accelobs * obs, infodata * idata, Cmdline * cmd, int usemmap, int readid);
+
+
 GSList *sort_accelcands(GSList *list);
 GSList *eliminate_harmonics(GSList *cands, int *numcands);
 void deredden(fcomplex *fft, int numamps);
 void optimize_accelcand(accelcand *cand, accelobs *obs);
+void optimize_accelcand_list(accelcand *cand, accelobs *obs, int readid);
+void optimize_accelcand_list_gpu_noharmpolish(accelcand *cand, accelobs *obs, int readid);
+
 void output_fundamentals(fourierprops *props, GSList *list, 
 			 accelobs *obs, infodata *idata);
+void output_fundamentals_list(fourierprops *props, GSList *list, 
+			 accelobs *obs, infodata *idata, int readid);
+
 void output_harmonics(GSList *list, accelobs *obs, infodata *idata);
+void output_harmonics_list(GSList *list, accelobs *obs, infodata *idata, int readid);
+
 void free_accelcand(gpointer data, gpointer user_data);
 void print_accelcand(gpointer data, gpointer user_data);
 fcomplex *get_fourier_amplitudes(long long lobin, int numbins, accelobs *obs);
 void  *get_fourier_amplitudes_gpu(long long lobin, int numbins, accelobs * obs, fcomplex *tmpdata);
+void  get_fourier_amplitudes_gpu_1(long long lobin, int numbins, accelobs * obs, fcomplex *tmpdata);
+
+void  *get_fourier_amplitudes_gpu_list(long long lobin, int numbins, accelobs * obs, fcomplex *tmpdata, int readdatanumid);
 ffdotpows *subharm_fderivs_vol(int numharm, int harmnum, 
 			       double fullrlo, double fullrhi, 
 			       subharminfo *shi, accelobs *obs);
@@ -161,8 +191,13 @@ ffdotpows *ini_subharm_fderivs_vol(int numharm, int harmnum,
 			       subharminfo *shi, accelobs *obs);
 cufftComplex *cp_kernel_array_to_gpu(subharminfo **subharminfs, int numharmstages, int **offset_array);
 void *subharm_fderivs_vol_gpu(int numharm, int harmnum, double fullrlo, double fullrhi, subharminfo *shi, accelobs *obs, cufftComplex *fkern_gpu, cufftComplex *pdata_gpu, cufftComplex *tmpdat_gpu, cufftComplex *tmpout_gpu, float *outpows_gpu, float *outpows_gpu_obs, cufftComplex *pdata, int tip, unsigned short *d_zinds_gpu, unsigned short *d_rinds_gpu, unsigned short *zinds_cpu, unsigned short *rinds_cpu, ffdotpows *fundamental, int **offset_array, int stage, cufftComplex *data_gpu, float *powers);
+void *subharm_fderivs_vol_gpu_1(int numharm, int harmnum, double fullrlo, double fullrhi, subharminfo *shi, accelobs *obs, cufftComplex *fkern_gpu, cufftComplex *pdata_gpu, cufftComplex *tmpdat_gpu, cufftComplex *tmpout_gpu, float *outpows_gpu, float *outpows_gpu_obs, cufftComplex *pdata, int tip, unsigned short *d_zinds_gpu, unsigned short *d_rinds_gpu, unsigned short *zinds_cpu, unsigned short *rinds_cpu, ffdotpows *fundamental, int **offset_array, int stage, cufftComplex *data_gpu, float *powers, int readid);
+void *subharm_fderivs_vol_gpu_1_list(int numharm, int harmnum, double fullrlo, double fullrhi, subharminfo *shi, accelobs *obs, cufftComplex *fkern_gpu, cufftComplex *pdata_gpu, cufftComplex *tmpdat_gpu, cufftComplex *tmpout_gpu, float *outpows_gpu, float *outpows_gpu_obs, cufftComplex *pdata, int tip, unsigned short *d_zinds_gpu, unsigned short *d_rinds_gpu, unsigned short *zinds_cpu, unsigned short *rinds_cpu, ffdotpows *fundamental, int **offset_array, int stage, cufftComplex *data_gpu, float *powers, int readdatanum, int fftlen_0, double *norm_data_gpu, int outpows_gpu_xlen, int outpows_gpu_obs_xlen);  // int readid
+
+
 
 void init_cuFFT_plans(subharminfo **subharminfs, int numharmstages, int inmem);
+void init_cuFFT_plans_list(subharminfo **subharminfs, int numharmstages, int inmem, int readdatanum);
 void destroy_cuFFT_plans(subharminfo **subharminfs, int numharmstages, int inmem);
 
 float * prep_result_on_gpu(subharminfo **subharminfs, int numharmstages);
@@ -173,6 +208,7 @@ void inmem_add_ffdotpows(ffdotpows *fundamental, accelobs *obs,
 void get_rinds_gpu(ffdotpows * fundamental, int *rinds_gpu, int numharmstages);
 void get_rind_zind_gpu(unsigned short *d_rinds_gpu, unsigned short *d_zinds_gpu, unsigned short *rinds_cpu, unsigned short *zinds_cpu, int numharmstages, accelobs obs, double fullrlo);
 void inmem_add_subharm_gpu(ffdotpows * fundamental, accelobs * obs, float *outpows_gpu, float *outpows_gpu_obs, int stage, int *rinds_gpu);
+void inmem_add_subharm_gpu_list(ffdotpows * fundamental, accelobs * obs, float *outpows_gpu, float *outpows_gpu_obs, int stage, int *rinds_gpu, int outpows_gpu_xlen, int readdatanum, int outpows_gpu_obs_xlen);
 void fund_to_ffdotplane_trans(ffdotpows *ffd, accelobs *obs);
 void inmem_add_ffdotpows_trans(ffdotpows *fundamental, accelobs *obs,
                                int numharm, int harmnum);
@@ -186,5 +222,7 @@ GSList *search_ffdotpows(ffdotpows *ffdot, int numharm,
 GSList *search_ffdotpows_sort_gpu_result(ffdotpows * ffdot, int numharm,
                          accelobs * obs, GSList * cands, accel_cand_gpu *cand_gpu_cpu, int nof_cand);
 void free_accelobs(accelobs *obs);
+
+void free_accelobs_list(accelobs *obs);
 
 #endif

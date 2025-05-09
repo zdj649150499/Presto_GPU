@@ -683,6 +683,221 @@ void optimize_accelcand(accelcand * cand, accelobs * obs)
                                   obs->numindep[twon_to_index(numharm)]);
 }
 
+void optimize_accelcand_list(accelcand *cand, accelobs *obs, int readid)
+{
+    int ii;
+    // static double r, z, w;
+    double r, z, w;
+
+    int numharm = cand->numharm;
+    double cand_r = cand->r;
+    double cand_z = cand->z;
+    double cand_w = cand->w;
+
+    
+
+    long long obs_numbins = obs->numbins;
+    long long obs_lobin = obs->lobin;
+    int obs_numw = obs->numw;
+
+    int obs_dat_input = obs->dat_input;
+    int obs_mmap_file = obs->mmap_file;
+    int obs_use_harmonic_polishing = obs->use_harmonic_polishing;
+
+    cand->pows = gen_dvect(numharm);
+    cand->hirs = gen_dvect(numharm);
+    cand->hizs = gen_dvect(numharm);
+    cand->hiws = gen_dvect(numharm);
+    cand->derivs = (rderivs *) malloc(sizeof(rderivs) * numharm);
+
+    double pows_bk[numharm];
+    double hirs_bk[numharm];
+    double hizs_bk[numharm];
+    double hiws_bk[numharm];
+    rderivs derivs_bk[numharm];
+    
+    
+    if (obs_use_harmonic_polishing &&
+        (obs_mmap_file || obs_dat_input)) {
+        if (obs_numw) {
+            max_rzw_arr_harmonics(obs->fftlist[readid], obs_numbins,
+                                  numharm,
+                                  cand_r - obs_lobin,
+                                  cand_z, cand_w, &r, &z, &w,
+                                  cand->derivs, cand->pows);
+            
+        } else {
+            // max_rz_arr_harmonics(obs->fft, obs_numbins,
+            //                      numharm,
+            //                      cand_r - obs_lobin,
+            //                      cand_z, &r, &z,
+            //                      cand->derivs, cand->pows);
+            max_rz_arr_harmonics(obs->fftlist[readid], obs_numbins,
+                                 numharm,
+                                 cand_r - obs_lobin,
+                                 cand_z, &r, &z,
+                                 derivs_bk, pows_bk);
+        }
+        for (ii = 0; ii < numharm; ii++) {
+            // cand->hirs[ii] = (r + obs_lobin) * (ii + 1);
+            // cand->hizs[ii] = z * (ii + 1);
+            // cand->hiws[ii] = obs_numw ? w * (ii + 1) : 0.0;
+            hirs_bk[ii] = (r + obs_lobin) * (ii + 1);
+            hizs_bk[ii] = z * (ii + 1);
+            hiws_bk[ii] = obs_numw ? w * (ii + 1) : 0.0;
+        }
+    } else {
+        for (ii = 0; ii < numharm; ii++) {
+            if (obs_mmap_file || obs_dat_input) {
+                if (obs_numw)
+                    // cand->pows[ii] = max_rzw_arr(obs->fft,
+                    //                              obs_numbins,
+                    //                              cand_r * (ii + 1) - obs_lobin,
+                    //                              cand_z * (ii + 1),
+                    //                              cand_w * (ii + 1),
+                    //                              &(cand->hirs[ii]),
+                    //                              &(cand->hizs[ii]),
+                    //                              &(cand->hiws[ii]),
+                    //                              &(cand->derivs[ii]));
+                    pows_bk[ii] = max_rzw_arr(obs->fftlist[readid],
+                                                 obs_numbins,
+                                                 cand_r * (ii + 1) - obs_lobin,
+                                                 cand_z * (ii + 1),
+                                                 cand_w * (ii + 1),
+                                                 &(hirs_bk[ii]),
+                                                 &(hizs_bk[ii]),
+                                                 &(hiws_bk[ii]),
+                                                 &(derivs_bk[ii]));
+                else
+                    // cand->pows[ii] = max_rz_arr(obs->fft,
+                    //                             obs_numbins,
+                    //                             cand_r * (ii + 1) - obs_lobin,
+                    //                             cand_z * (ii + 1),
+                    //                             &(cand->hirs[ii]),
+                    //                             &(cand->hizs[ii]), 
+                    //                             &(cand->derivs[ii]));
+                    pows_bk[ii] = max_rz_arr(obs->fftlist[readid],
+                                                obs_numbins,
+                                                cand_r * (ii + 1) - obs_lobin,
+                                                cand_z * (ii + 1),
+                                                &(hirs_bk[ii]),
+                                                &(hizs_bk[ii]), 
+                                                &(derivs_bk[ii]));
+            } else {
+                if (obs_numw)
+                    // cand->pows[ii] = max_rzw_file(obs->fftfile,
+                    //                               cand_r * (ii + 1) - obs_lobin,
+                    //                               cand_z * (ii + 1),
+                    //                               cand_w * (ii + 1),
+                    //                               &(cand->hirs[ii]),
+                    //                               &(cand->hizs[ii]),
+                    //                               &(cand->hiws[ii]),
+                    //                               &(cand->derivs[ii]));
+                    pows_bk[ii] = max_rzw_file(obs->fftfilelist[readid],
+                                                  cand_r * (ii + 1) - obs_lobin,
+                                                  cand_z * (ii + 1),
+                                                  cand_w * (ii + 1),
+                                                  &(hirs_bk[ii]),
+                                                  &(hizs_bk[ii]),
+                                                  &(hiws_bk[ii]),
+                                                  &(derivs_bk[ii]));
+                else
+                    // cand->pows[ii] = max_rz_file(obs->fftfile,
+                    //                                 cand_r * (ii + 1) - obs_lobin,
+                    //                                 cand_z * (ii + 1),
+                    //                                 &(cand->hirs[ii]),
+                    //                                 &(cand->hizs[ii]), 
+                    //                                 &(cand->derivs[ii]));
+                    pows_bk[ii] = max_rz_file(obs->fftfilelist[readid],
+                                                 cand_r * (ii + 1) - obs_lobin,
+                                                 cand_z * (ii + 1),
+                                                 &(hirs_bk[ii]),
+                                                 &(hizs_bk[ii]), 
+                                                 &(derivs_bk[ii]));
+            }
+            // cand->hirs[ii] += obs_lobin;
+            hirs_bk[ii] += obs_lobin;
+        }
+    }
+    
+    memcpy(cand->pows, pows_bk, sizeof(double)*numharm);
+    memcpy(cand->hirs, hirs_bk, sizeof(double)*numharm);
+    memcpy(cand->hizs, hizs_bk, sizeof(double)*numharm);
+    memcpy(cand->hiws, hiws_bk, sizeof(double)*numharm);
+    memcpy(cand->derivs, derivs_bk, sizeof(rderivs)*numharm);
+
+    cand->sigma = candidate_sigma(cand->power, numharm,
+                                  obs->numindep[twon_to_index(numharm)]);
+}
+
+void optimize_accelcand_list_gpu_noharmpolish(accelcand *cand, accelobs *obs, int readid)
+{
+    int ii;
+    double r, z, w;
+
+    int numharm = cand->numharm;
+    double cand_r = cand->r;
+    double cand_z = cand->z;
+    double cand_w = cand->w;
+
+    
+
+    long long obs_numbins = obs->numbins;
+    long long obs_lobin = obs->lobin;
+    int obs_numw = obs->numw;
+
+    int obs_dat_input = obs->dat_input;
+    int obs_mmap_file = obs->mmap_file;
+    int obs_use_harmonic_polishing = obs->use_harmonic_polishing;
+
+    // cand->pows = gen_dvect(numharm);
+    // cand->hirs = gen_dvect(numharm);
+    // cand->hizs = gen_dvect(numharm);
+    // cand->hiws = gen_dvect(numharm);
+    // cand->derivs = (rderivs *) malloc(sizeof(rderivs) * numharm);
+
+    double pows_bk[numharm];
+    double hirs_bk[numharm];
+    double hizs_bk[numharm];
+    double hiws_bk[numharm];
+    rderivs derivs_bk[numharm];
+    
+    {
+        for (ii = 0; ii < numharm; ii++) {
+            if (obs_mmap_file || obs_dat_input) {
+                // if (obs_numw)
+                //     pows_bk[ii] = max_rzw_arr(obs->fftlist[readid],
+                //                                  obs_numbins,
+                //                                  cand_r * (ii + 1) - obs_lobin,
+                //                                  cand_z * (ii + 1),
+                //                                  cand_w * (ii + 1),
+                //                                  &(hirs_bk[ii]),
+                //                                  &(hizs_bk[ii]),
+                //                                  &(hiws_bk[ii]),
+                //                                  &(derivs_bk[ii]));
+                // else
+                    pows_bk[ii] = max_rz_arr(obs->fftlist[readid],
+                                                obs_numbins,
+                                                cand_r * (ii + 1) - obs_lobin,
+                                                cand_z * (ii + 1),
+                                                &(hirs_bk[ii]),
+                                                &(hizs_bk[ii]), 
+                                                &(derivs_bk[ii]));
+            } 
+            // cand->hirs[ii] += obs_lobin;
+            hirs_bk[ii] += obs_lobin;
+        }
+    }
+    
+    memcpy(cand->pows, pows_bk, sizeof(double)*numharm);
+    memcpy(cand->hirs, hirs_bk, sizeof(double)*numharm);
+    memcpy(cand->hizs, hizs_bk, sizeof(double)*numharm);
+    memcpy(cand->hiws, hiws_bk, sizeof(double)*numharm);
+    memcpy(cand->derivs, derivs_bk, sizeof(rderivs)*numharm);
+
+    cand->sigma = candidate_sigma(cand->power, numharm,
+                                  obs->numindep[twon_to_index(numharm)]);
+}
 
 static void center_string(char *outstring, char *instring, int width)
 {
@@ -898,6 +1113,183 @@ void output_fundamentals(fourierprops * props, GSList * list,
     free(notes);
 }
 
+void output_fundamentals_list(fourierprops *props, GSList *list, 
+			 accelobs *obs, infodata *idata, int readid)
+{
+    double accel = 0.0, accelerr = 0.0, coherent_pow;
+    int ii, jj, numcols = 13, numcands, *width, *error;
+    int widths[13] = { 4, 5, 6, 8, 4, 16, 15, 15, 15, 11, 11, 15, 20 };
+    int errors[13] = { 0, 0, 0, 0, 0, 1, 1, 2, 1, 2, 2, 2, 0 };
+    char tmpstr[80], ctrstr[80], *notes;
+    accelcand *cand;
+    register GSList *listptr;
+    rzwerrs errs;
+    static char **title;
+    static char *titles1[] = { "", "", "Summed", "Coherent", "Num", "Period",
+        "Frequency", "FFT 'r'", "Freq Deriv", "FFT 'z'", "FFT 'w'",
+        "Accel", ""
+    };
+    static char *titles2[] = { "Cand", "Sigma", "Power", "Power", "Harm", "(ms)",
+        "(Hz)", "(bin)", "(Hz/s)", "(bins)", "(bins)",
+        "(m/s^2)", "Notes"
+    };
+
+    numcands = g_slist_length(list);
+    listptr = list;
+
+    /* Close the old work file and open the cand file */
+
+    if (!obs->dat_input)
+        fclose(obs->workfilelist[readid]);  /* Why is this here? -A */
+    obs->workfilelist[readid] = chkfopen(obs->accelnmlist[readid], "w");
+
+    /* Set our candidate notes to all spaces */
+
+    notes = (char *) malloc(numcands * widths[numcols - 1]);
+    memset(notes, ' ', numcands * widths[numcols - 1]);
+
+    /* Compare the candidates with the pulsar database */
+
+    if (strncmp(idata->telescope, "None", 4) != 0) {
+        if (dms2rad(idata->ra_h, idata->ra_m, idata->ra_s) != 0.0 &&
+            hms2rad(idata->dec_d, idata->dec_m, idata->dec_s) != 0.0) {
+            for (ii = 0; ii < numcands; ii++) {
+                comp_psr_to_cand(props + ii, idata, notes + ii * 20, 0);
+            }
+        }
+    }
+
+    /* Compare the candidates with themselves */
+
+    compare_rzw_cands(props, numcands, notes);
+
+    /* Print the header */
+
+    width = widths;
+    title = titles1;
+    for (ii = 0; ii < numcols - 1; ii++) {
+        if (obs->numw==0 && ii==10) { // Skip jerk parts
+            title++;
+            width++;
+            continue;
+        } else {
+            center_string(ctrstr, *title++, *width++);
+            fprintf(obs->workfilelist[readid], "%s  ", ctrstr);
+        }
+    }
+    center_string(ctrstr, *title++, *width++);
+    fprintf(obs->workfilelist[readid], "%s\n", ctrstr);
+
+    width = widths;
+    title = titles2;
+    for (ii = 0; ii < numcols - 1; ii++) {
+        if (obs->numw==0 && ii==10) { // Skip jerk parts
+            title++;
+            width++;
+            continue;
+        } else {
+            center_string(ctrstr, *title++, *width++);
+            fprintf(obs->workfilelist[readid], "%s  ", ctrstr);
+        }
+    }
+    center_string(ctrstr, *title++, *width++);
+    fprintf(obs->workfilelist[readid], "%s\n", ctrstr);
+
+    width = widths;
+    for (ii = 0; ii < numcols - 1; ii++) {
+        if (obs->numw==0 && ii==10) { // Skip jerk parts
+            width++;
+            continue;
+        } else {
+            memset(tmpstr, '-', *width);
+            tmpstr[*width++] = '\0';
+            fprintf(obs->workfilelist[readid], "%s--", tmpstr);
+        }
+    }
+    memset(tmpstr, '-', *width++);
+    tmpstr[widths[ii]] = '\0';
+    fprintf(obs->workfilelist[readid], "%s\n", tmpstr);
+
+    /* Print the fundamentals */
+
+    for (ii = 0; ii < numcands; ii++) {
+        width = widths;
+        error = errors;
+        cand = (accelcand *) (listptr->data);
+        calc_rzwerrs(props + ii, obs->T, &errs);
+
+        {                       /* Calculate the coherently summed power */
+            double coherent_r = 0.0, coherent_i = 0.0;
+            double phs0, phscorr, amp;
+            rderivs harm;
+
+            /* These phase calculations assume the fundamental is best */
+            /* Better to irfft them and check the amplitude */
+            phs0 = cand->derivs[0].phs;
+            for (jj = 0; jj < cand->numharm; jj++) {
+                harm = cand->derivs[jj];
+                if (obs->nph > 0.0)
+                    amp = sqrt(harm.pow / obs->nph);
+                else
+                    amp = sqrt(harm.pow / harm.locpow);
+                phscorr = phs0 - fmod((jj + 1.0) * phs0, TWOPI);
+                coherent_r += amp * cos(harm.phs + phscorr);
+                coherent_i += amp * sin(harm.phs + phscorr);
+            }
+            coherent_pow = coherent_r * coherent_r + coherent_i * coherent_i;
+        }
+
+        sprintf(tmpstr, "%-4d", ii + 1);
+        center_string(ctrstr, tmpstr, *width++);
+        error++;
+        fprintf(obs->workfilelist[readid], "%s  ", ctrstr);
+
+        sprintf(tmpstr, "%.2f", cand->sigma);
+        center_string(ctrstr, tmpstr, *width++);
+        error++;
+        fprintf(obs->workfilelist[readid], "%s  ", ctrstr);
+
+        sprintf(tmpstr, "%.2f", cand->power);
+        center_string(ctrstr, tmpstr, *width++);
+        error++;
+        fprintf(obs->workfilelist[readid], "%s  ", ctrstr);
+
+        sprintf(tmpstr, "%.2f", coherent_pow);
+        center_string(ctrstr, tmpstr, *width++);
+        error++;
+        fprintf(obs->workfilelist[readid], "%s  ", ctrstr);
+
+        sprintf(tmpstr, "%d", cand->numharm);
+        center_string(ctrstr, tmpstr, *width++);
+        error++;
+        fprintf(obs->workfilelist[readid], "%s  ", ctrstr);
+
+        write_val_with_err(obs->workfilelist[readid], errs.p * 1000.0, errs.perr * 1000.0,
+                           *error++, *width++);
+        write_val_with_err(obs->workfilelist[readid], errs.f, errs.ferr, *error++, *width++);
+        write_val_with_err(obs->workfilelist[readid], props[ii].r, props[ii].rerr,
+                           *error++, *width++);
+        write_val_with_err(obs->workfilelist[readid], errs.fd, errs.fderr, *error++, *width++);
+        write_val_with_err(obs->workfilelist[readid], props[ii].z, props[ii].zerr,
+                           *error++, *width++);
+        if (obs->numw) {
+            write_val_with_err(obs->workfilelist[readid], props[ii].w, props[ii].werr,
+                               *error++, *width++);
+        } else {
+            error++;
+            width++;
+        }
+        accel = props[ii].z * SOL / (obs->T * obs->T * errs.f);
+        accelerr = props[ii].zerr * SOL / (obs->T * obs->T * errs.f);
+        write_val_with_err(obs->workfilelist[readid], accel, accelerr, *error++, *width++);
+        fprintf(obs->workfilelist[readid], "  %.20s\n", notes + ii * 20);
+        fflush(obs->workfilelist[readid]);
+        listptr = listptr->next;
+    }
+    fprintf(obs->workfilelist[readid], "\n\n");
+    free(notes);
+}
+
 
 void output_harmonics(GSList * list, accelobs * obs, infodata * idata)
 {
@@ -1036,6 +1428,142 @@ void output_harmonics(GSList * list, accelobs * obs, infodata * idata)
     free(command);
 }
 
+void output_harmonics_list(GSList *list, accelobs *obs, infodata *idata, int readid)
+{
+    int ii, jj, numcols = 15, numcands;
+    int widths[15] = { 5, 4, 5, 15, 11, 18, 13, 12, 9, 12, 9, 12, 10, 10, 20 };
+    int errors[15] = { 0, 0, 0, 2, 0, 2, 0, 2, 0, 2, 0, 2, 2, 2, 0 };
+    char tmpstr[30], ctrstr[30], notes[21], *command;
+    accelcand *cand;
+    register GSList *listptr;
+    fourierprops props;
+    rzwerrs errs;
+    static char *titles1[] = { "", "", "", "Power /", "Raw",
+        "FFT 'r'", "Pred 'r'", "FFT 'z'", "Pred 'z'", "FFT 'w'", "Pred 'w'",
+        "Phase", "Centroid", "Purity", ""
+    };
+    static char *titles2[] = { "Cand", "Harm", "Sigma", "Loc Pow", "Power",
+        "(bin)", "(bin)", "(bins)", "(bins)", "(bins)", "(bins)",
+        "(rad)", "(0-1)", "<p> = 1", "Notes"
+    };
+
+    numcands = g_slist_length(list);
+    listptr = list;
+
+    /* Print the header */
+
+    for (ii = 0; ii < numcols - 1; ii++) {
+        if (obs->numw==0 && (ii==9 || ii==10)) { // Skip jerk parts
+            continue;
+        } else {
+            center_string(ctrstr, titles1[ii], widths[ii]);
+            fprintf(obs->workfilelist[readid], "%s  ", ctrstr);
+        }
+    }
+    center_string(ctrstr, titles1[ii], widths[ii]);
+    fprintf(obs->workfilelist[readid], "%s\n", ctrstr);
+    for (ii = 0; ii < numcols - 1; ii++) {
+        if (obs->numw==0 && (ii==9 || ii==10)) { // Skip jerk parts
+            continue;
+        } else {
+            if (obs->nph > 0.0 && ii == 3)  /*  HAAACK!!! */
+                center_string(ctrstr, "NumPhot", widths[ii]);
+            else
+                center_string(ctrstr, titles2[ii], widths[ii]);
+            fprintf(obs->workfilelist[readid], "%s  ", ctrstr);
+        }
+    }
+    center_string(ctrstr, titles2[ii], widths[ii]);
+    fprintf(obs->workfilelist[readid], "%s\n", ctrstr);
+    for (ii = 0; ii < numcols - 1; ii++) {
+        if (obs->numw==0 && (ii==9 || ii==10)) { // Skip jerk parts
+            continue;
+        } else {
+            memset(tmpstr, '-', widths[ii]);
+            tmpstr[widths[ii]] = '\0';
+            fprintf(obs->workfilelist[readid], "%s--", tmpstr);
+        }
+    }
+    memset(tmpstr, '-', widths[ii]);
+    tmpstr[widths[ii]] = '\0';
+    fprintf(obs->workfilelist[readid], "%s\n", tmpstr);
+
+    /* Print the harmonics */
+
+    for (ii = 0; ii < numcands; ii++) {
+        cand = (accelcand *) (listptr->data);
+        for (jj = 0; jj < cand->numharm; jj++) {
+            if (obs->nph > 0.0) {
+                double tmp_locpow;
+
+                tmp_locpow = cand->derivs[jj].locpow;
+                cand->derivs[jj].locpow = obs->nph;
+                calc_props(cand->derivs[jj], cand->hirs[jj],
+                           cand->hizs[jj], cand->hiws[jj], &props);
+                cand->derivs[jj].locpow = tmp_locpow;
+            } else {
+                calc_props(cand->derivs[jj], cand->hirs[jj],
+                           cand->hizs[jj], cand->hiws[jj], &props);
+            }
+            calc_rzwerrs(&props, obs->T, &errs);
+            if (strncmp(idata->telescope, "None", 4) != 0) {
+                comp_psr_to_cand(&props, idata, notes, 0);
+            } else {
+                memset(notes, ' ', 20);
+                notes[20] = '\0';
+            }
+            if (jj == 0)
+                sprintf(tmpstr, " %-4d", ii + 1);
+            else
+                sprintf(tmpstr, "     ");
+            center_string(ctrstr, tmpstr, widths[0]);
+            fprintf(obs->workfilelist[readid], "%s  ", ctrstr);
+            sprintf(tmpstr, "%-4d", jj + 1);
+            center_string(ctrstr, tmpstr, widths[1]);
+            fprintf(obs->workfilelist[readid], "%s  ", ctrstr);
+            sprintf(tmpstr, "%.2f", candidate_sigma(props.pow, 1, 1));
+            center_string(ctrstr, tmpstr, widths[2]);
+            fprintf(obs->workfilelist[readid], "%s  ", ctrstr);
+            write_val_with_err(obs->workfilelist[readid], props.pow, props.powerr,
+                               errors[3], widths[3]);
+            sprintf(tmpstr, "%.3g", props.rawpow);
+            center_string(ctrstr, tmpstr, widths[4]);
+            fprintf(obs->workfilelist[readid], "%s  ", ctrstr);
+            write_val_with_err(obs->workfilelist[readid], props.r, props.rerr,
+                               errors[5], widths[5]);
+            sprintf(tmpstr, "%.2f", cand->r * (jj + 1));
+            center_string(ctrstr, tmpstr, widths[6]);
+            fprintf(obs->workfilelist[readid], "%s  ", ctrstr);
+            write_val_with_err(obs->workfilelist[readid], props.z, props.zerr,
+                               errors[7], widths[7]);
+            sprintf(tmpstr, "%.2f", cand->z * (jj + 1));
+            center_string(ctrstr, tmpstr, widths[8]);
+            fprintf(obs->workfilelist[readid], "%s  ", ctrstr);
+            if (obs->numw) {
+                write_val_with_err(obs->workfilelist[readid], props.w, props.werr,
+                                   errors[9], widths[9]);
+                sprintf(tmpstr, "%.2f", cand->w * (jj + 1));
+                center_string(ctrstr, tmpstr, widths[10]);
+                fprintf(obs->workfilelist[readid], "%s  ", ctrstr);
+            }
+            write_val_with_err(obs->workfilelist[readid], props.phs, props.phserr,
+                               errors[11], widths[11]);
+            write_val_with_err(obs->workfilelist[readid], props.cen, props.cenerr,
+                               errors[12], widths[12]);
+            write_val_with_err(obs->workfilelist[readid], props.pur, props.purerr,
+                               errors[13], widths[13]);
+            fprintf(obs->workfilelist[readid], "  %.20s\n", notes);
+            fflush(obs->workfilelist[readid]);
+        }
+        listptr = listptr->next;
+    }
+    fprintf(obs->workfilelist[readid], "\n\n");
+    fclose(obs->workfilelist[readid]);
+    command = malloc(strlen(obs->rootfilenmlist[readid]) + strlen(obs->accelnmlist[readid]) + 20);
+    sprintf(command, "cat %s.inf >> %s", obs->rootfilenmlist[readid], obs->accelnmlist[readid]);
+    system(command);
+    free(command);
+}
 
 void print_accelcand(gpointer data, gpointer user_data)
 {
@@ -1112,6 +1640,71 @@ void  *get_fourier_amplitudes_gpu(long long lobin, int numbins, accelobs * obs, 
     }
 }
 
+void  get_fourier_amplitudes_gpu_1(long long lobin, int numbins, accelobs * obs, fcomplex *tmpdata)
+{
+    static fcomplex zeros = { 0.0, 0.0 };
+    long long ii, offset = 0, firstbin, newnumbins;
+    // fcomplex *tmpdata = gen_cvect(numbins);
+        
+    // zero-pad if we try to read before the beginning of the FFT
+    if (lobin - obs->lobin < 0) {
+        offset = llabs(lobin - obs->lobin);
+        Set_cufftComplex_date_as_zero_gpu(tmpdata, offset);
+        // for (ii = 0; ii < offset; ii++)
+        //     tmpdata[ii] = zeros;
+    }
+    firstbin = (lobin - obs->lobin) + offset;
+    newnumbins = numbins - offset;
+
+    // zero-pad if we try to read beyond the end of the FFT
+    if (firstbin + newnumbins > obs->numbins) {
+        long long numpad = firstbin + newnumbins - obs->numbins;
+        newnumbins = newnumbins - numpad;
+        Set_cufftComplex_date_as_zero_gpu(tmpdata + (numbins - numpad), numpad); 
+        // for (ii = numbins - numpad; ii < numbins; ii++)
+        //     tmpdata[ii] = zeros;
+    }
+    // cudaMemcpy(tmpdata + offset, obs->fft_gpu + firstbin, sizeof(fcomplex) * newnumbins, cudaMemcpyDeviceToDevice);
+    cudaMemcpy(tmpdata + offset, obs->fft + firstbin, sizeof(fcomplex) * newnumbins, cudaMemcpyHostToDevice);
+}
+
+void  *get_fourier_amplitudes_gpu_list(long long lobin, int numbins, accelobs * obs, fcomplex *tmpdata, int readdatanumid)
+{
+    fcomplex zeros = { 0.0, 0.0 };
+
+    if (obs->mmap_file || obs->dat_input) {
+        
+
+        long long ii, offset = 0, firstbin, newnumbins;
+        // fcomplex *tmpdata = gen_cvect(numbins);
+        
+        // zero-pad if we try to read before the beginning of the FFT
+        if (lobin - obs->lobin < 0) {
+            offset = llabs(lobin - obs->lobin);
+            for (ii = 0; ii < offset; ii++)
+                tmpdata[ii] = zeros;
+        }
+        firstbin = (lobin - obs->lobin) + offset;
+        newnumbins = numbins - offset;
+
+        // zero-pad if we try to read beyond the end of the FFT
+        if (firstbin + newnumbins > obs->numbins) {
+            long long numpad = firstbin + newnumbins - obs->numbins;
+            newnumbins = newnumbins - numpad;
+            for (ii = numbins - numpad; ii < numbins; ii++)
+                tmpdata[ii] = zeros;
+        }
+        // Now grab the data we need
+        fcomplex *obsfft;
+        obsfft = obs->fftlist[readdatanumid];
+        memcpy(tmpdata + offset, obsfft + firstbin, sizeof(fcomplex) * newnumbins);
+        // memcpy(tmpdata + offset, obs->fftlist[readdatanumid] + firstbin, sizeof(fcomplex) * newnumbins);
+        // return tmpdata;
+    }
+     else {
+        read_fcomplex_file_gpu(obs->fftfilelist[readdatanumid], lobin - obs->lobin, numbins, tmpdata);
+    }
+}
 
 
 ffdotpows *subharm_fderivs_vol(int numharm, int harmnum,
@@ -1305,7 +1898,13 @@ ffdotpows *ini_subharm_fderivs_vol(int numharm, int harmnum,
 			       subharminfo *shi, accelobs *obs)
 {
     double drlo, drhi, harm_fract;
-    ffdotpows *ffdot = (ffdotpows *) malloc(sizeof(ffdotpows));
+    static ffdotpows *ffdot;
+    static int first_time = 1;
+    
+    if(first_time)
+        ffdot = (ffdotpows *) malloc(sizeof(ffdotpows));
+    else 
+        first_time = 0;
 
     /* Calculate and get the required amplitudes */
     harm_fract = (double) harmnum / (double) numharm;
@@ -1363,6 +1962,7 @@ cufftComplex *cp_kernel_array_to_gpu(subharminfo **subharminfs, int numharmstage
 		}
 	}
 	cudaMalloc((void **)&kernel_vect_on_gpu, sizeof(cufftComplex) * kernel_total_size);
+    // CUDA_CHECK(cudaGetLastError());
 	kernel_vect_host = (cufftComplex *)malloc( sizeof(cufftComplex) * kernel_total_size);
 	//take kernel_vect_host as buffer
 	 //stage : 0
@@ -1401,6 +2001,7 @@ cufftComplex *cp_kernel_array_to_gpu(subharminfo **subharminfs, int numharmstage
         }
 	}   
    cudaMemcpy( kernel_vect_on_gpu, kernel_vect_host, sizeof(cufftComplex) * kernel_total_size, cudaMemcpyHostToDevice);
+//    CUDA_CHECK(cudaGetLastError());
 
    free(kernel_vect_host);
 
@@ -1455,7 +2056,9 @@ void get_rind_zind_gpu(unsigned short *d_rinds_gpu, unsigned short *d_zinds_gpu,
     }
 
     cudaMemcpy(d_rinds_gpu, rinds_cpu, sizeof(unsigned short)*obs.corr_uselen*(pow(2,numharmstages)-1), cudaMemcpyHostToDevice);
+    // CUDA_CHECK(cudaGetLastError());
     cudaMemcpy(d_zinds_gpu, zinds_cpu, sizeof(unsigned short)*obs.numz*(pow(2,numharmstages)-1), cudaMemcpyHostToDevice);
+    // CUDA_CHECK(cudaGetLastError());
 
     // cudaFree(rinds_cpu);
     // cudaFree(zinds_cpu);
@@ -1463,6 +2066,147 @@ void get_rind_zind_gpu(unsigned short *d_rinds_gpu, unsigned short *d_zinds_gpu,
 
 
 void *subharm_fderivs_vol_gpu(int numharm, int harmnum, double fullrlo, double fullrhi, subharminfo *shi, accelobs *obs, cufftComplex *fkern_gpu, cufftComplex *pdata_gpu, cufftComplex *tmpdat_gpu, cufftComplex *tmpout_gpu, float *outpows_gpu, float *outpows_gpu_obs, cufftComplex *pdata, int tip, unsigned short *d_zinds_gpu, unsigned short *d_rinds_gpu, unsigned short *zinds_cpu, unsigned short *rinds_cpu, ffdotpows *fundamental, int **offset_array, int stage, cufftComplex *data_gpu, float *powers)
+{
+    int ii, numdata, fftlen, binoffset;
+    long long lobin;
+    float powargr, powargi;
+    double drlo, drhi, harm_fract;
+    static fcomplex *data;
+    static float *powers_gpu = NULL;
+    static int firsttime = 1;
+
+    harm_fract = (double) harmnum / (double) numharm;
+    drlo = calc_required_r(harm_fract, fullrlo);
+    drhi = calc_required_r(harm_fract, fullrhi);
+    long long rlo = (long long) floor(drlo);
+    // register int zlo = calc_required_z(harm_fract, obs->zlo);
+    /* Initialize the lookup indices */
+    // if (numharm > 1 && !obs->inmem) {
+    //     double rr, subr;
+    //     for (ii = 0; ii < obs->corr_uselen; ii++) {
+    //         rr = fullrlo + ii * ACCEL_DR;
+    //         subr = calc_required_r(harm_fract, rr);
+    //         rinds_cpu[ii] = index_from_r(subr, rlo);
+    //     }
+    //     double zz, subz;
+    //     for (ii = 0; ii < obs->numz; ii++) {
+    //         zz = obs->zlo + ii * ACCEL_DZ;
+    //         subz = calc_required_z(harm_fract, zz);
+    //         zinds_cpu[ii] = index_from_z(subz, zlo);
+    //     }
+    // }
+    // The +1 below is important!
+    int numrs = (int) ((ceil(drhi) - floor(drlo))
+                          * ACCEL_RDR + DBLCORRECT) + 1;
+    if (numharm == 1 && harmnum == 1) {
+        numrs = obs->corr_uselen;
+    } else {
+        if (numrs % ACCEL_RDR)
+            numrs = (numrs / ACCEL_RDR + 1) * ACCEL_RDR;
+    }
+    int numzs = shi->numkern_zdim;
+
+    /* Determine the largest kernel halfwidth needed to analyze the current subharmonic */
+    /* Verified numerically that, as long as we have symmetric z's and w's, */
+    /* shi->kern[0][0].kern_half_width is the maximal halfwidth over the range of w's and z's */
+    binoffset = shi->kern[0][0].kern_half_width;
+    fftlen = shi->kern[0][0].fftlen;
+    lobin = rlo - binoffset;
+    numdata = fftlen / ACCEL_NUMBETWEEN;
+
+    static double norm_data;
+
+    // if(obs->mmap_file || obs->dat_input)
+    // {
+    //     float norm_data_tmp;
+    //     if (firsttime) 
+    //     {
+    //         // cudaMalloc(&data, sizeof(fcomplex) * fftlen);
+    //         cudaMalloc(&powers_gpu, sizeof(float) * fftlen);
+    //         firsttime = 0;
+    //     }
+    //     get_fourier_amplitudes_gpu_1(lobin, numdata, obs, data_gpu);
+    //     // cudaMemcpy(data_gpu, data, sizeof(cufftComplex) * numdata, cudaMemcpyDeviceToDevice);
+
+    //     compute_power_gpu(data_gpu, powers_gpu, numdata);
+
+    //     sort_and_get_median_gpu(powers_gpu, numdata, &norm_data_tmp);
+    //     norm_data = 1.0 / sqrt(norm_data_tmp / log(2.0));
+
+    //     spread_no_pad_gpu(data_gpu, fftlen / ACCEL_NUMBETWEEN, pdata_gpu, fftlen, ACCEL_NUMBETWEEN, norm_data);
+    // }
+    // else
+    {
+        if(firsttime)
+        {
+            data = malloc(sizeof(fcomplex)*fftlen);
+            firsttime = 0;
+        }
+        // data = get_fourier_amplitudes(lobin, numdata, obs); // the data: done fft
+        get_fourier_amplitudes_gpu(lobin, numdata, obs, data);
+        cudaMemcpy(data_gpu, data, sizeof(cufftComplex) * numdata, cudaMemcpyHostToDevice);
+
+        
+        for (ii = 0; ii < numdata; ii++)
+                powers[ii] = POWER(data[ii].r, data[ii].i);
+        norm_data = 1.0 / sqrt(median(powers, numdata) / log(2.0));
+
+        // 等待所有操作完成
+        spread_no_pad_gpu(data_gpu, fftlen / ACCEL_NUMBETWEEN, pdata_gpu, fftlen, ACCEL_NUMBETWEEN, norm_data);
+
+    }
+
+    
+            
+    // cudaMemcpy(data_gpu, data, sizeof(cufftComplex)*numdata, cudaMemcpyHostToDevice);
+
+
+    
+
+    
+
+    // Note COMPLEXFFT is not thread-safe because of wisdom caching
+
+    // FFTonGPU(pdata_gpu, pdata_gpu, fftlen, 1, -1, plan_pdata_gpu_array[stage][harmnum-1]);
+    cufftExecC2C(plan_pdata_gpu_array[stage][harmnum-1], pdata_gpu, pdata_gpu, -1);
+
+
+    const float norm = 1.0 / (fftlen * fftlen);
+    int offset = binoffset * ACCEL_NUMBETWEEN;
+    long long rlen = (obs->highestbin + obs->corr_uselen) * ACCEL_RDR;
+
+    {
+        int offs = 0;
+        if(numharm ==1 && harmnum ==1)
+            offs = 0;
+        else if(numharm > 1)
+            offs =  offset_array[stage][harmnum-1];
+        
+        loops_in_GPU_1(pdata_gpu, fkern_gpu+offs ,tmpdat_gpu, fftlen, numzs);
+        // FFTonGPU(tmpdat_gpu, tmpout_gpu,fftlen, numzs, +1, plan_tmpdat_gpu_array[stage][harmnum-1]);
+        cufftExecC2C(plan_tmpdat_gpu_array[stage][harmnum-1], tmpdat_gpu, tmpout_gpu, 1);
+
+        if(obs->inmem)
+            loops_in_GPU_2(tmpout_gpu, outpows_gpu, numrs, numzs,offset, fftlen,norm, outpows_gpu_obs, rlen, rlo*ACCEL_RDR, 1);
+        else
+        {
+            if(numharm == 1 && harmnum == 1)
+            {
+                loops_in_GPU_2(tmpout_gpu, outpows_gpu, numrs, numzs,offset, fftlen, norm, outpows_gpu_obs, rlen, rlo*ACCEL_RDR, 0);
+            }
+            if(numharm > 1)
+            {
+                // cudaMemcpy(d_rinds_gpu, (unsigned short *)rinds_cpu, sizeof(unsigned short)*obs->corr_uselen, cudaMemcpyHostToDevice);
+                // cudaMemcpy(d_zinds_gpu, (unsigned short *)zinds_cpu, sizeof(unsigned short)*obs->numz, cudaMemcpyHostToDevice);
+                add_subharm_gpu(outpows_gpu, tmpout_gpu, d_rinds_gpu+(int)(((pow(2,stage-1)-1)+harmnum/2)*obs->corr_uselen), d_zinds_gpu+(int)(((pow(2,stage-1)-1)+harmnum/2)*obs->numz), fundamental->numrs, fundamental->numzs, fftlen, numzs, offset, norm);
+            }
+        }
+    }
+
+    // vect_free(data);
+}
+
+void *subharm_fderivs_vol_gpu_1(int numharm, int harmnum, double fullrlo, double fullrhi, subharminfo *shi, accelobs *obs, cufftComplex *fkern_gpu, cufftComplex *pdata_gpu, cufftComplex *tmpdat_gpu, cufftComplex *tmpout_gpu, float *outpows_gpu, float *outpows_gpu_obs, cufftComplex *pdata, int tip, unsigned short *d_zinds_gpu, unsigned short *d_rinds_gpu, unsigned short *zinds_cpu, unsigned short *rinds_cpu, ffdotpows *fundamental, int **offset_array, int stage, cufftComplex *data_gpu, float *powers, int readid)
 {
     int ii, numdata, fftlen, binoffset;
     long long lobin;
@@ -1512,34 +2256,36 @@ void *subharm_fderivs_vol_gpu(int numharm, int harmnum, double fullrlo, double f
 
     if(firsttime)
     {
-        data = malloc(sizeof(fcomplex)*fftlen);
+        data = (fcomplex *) malloc(sizeof(fcomplex)*fftlen);
         firsttime = 0;
     }
     // data = get_fourier_amplitudes(lobin, numdata, obs); // the data: done fft
-    get_fourier_amplitudes_gpu(lobin, numdata, obs, data);
+    // get_fourier_amplitudes_gpu(lobin, numdata, obs, data);
 
-
+    
+    get_fourier_amplitudes_gpu_list(lobin, numdata, obs, data, readid);
     cudaMemcpy(data_gpu, data, sizeof(cufftComplex) * numdata, cudaMemcpyHostToDevice);
-    // cudaMemcpy(data_gpu, data, sizeof(cufftComplex)*numdata, cudaMemcpyHostToDevice);
+    // CUDA_CHECK(cudaGetLastError());
+
+    // cufftComplex data_cpu_bk[10];
+    // cudaMemcpy(data_cpu_bk, data_gpu, sizeof(cufftComplex) * 10, cudaMemcpyDeviceToHost);
+
 
     double norm_data;
     for (ii = 0; ii < numdata; ii++)
             powers[ii] = POWER(data[ii].r, data[ii].i);
     norm_data = 1.0 / sqrt(median(powers, numdata) / log(2.0));
     
+
     // 等待所有操作完成
-    // cudaStreamSynchronize(stream_0);
-
-    // get_power_GPU(data_gpu, numdata, powers);
-    // norm_data = 1.0 / sqrt(get_med_gpu(powers, numdata) / log(2.0));
-
     spread_no_pad_gpu(data_gpu, fftlen / ACCEL_NUMBETWEEN, pdata_gpu, fftlen, ACCEL_NUMBETWEEN, norm_data);
+    
 
     // Note COMPLEXFFT is not thread-safe because of wisdom caching
 
     // FFTonGPU(pdata_gpu, pdata_gpu, fftlen, 1, -1, plan_pdata_gpu_array[stage][harmnum-1]);
     cufftExecC2C(plan_pdata_gpu_array[stage][harmnum-1], pdata_gpu, pdata_gpu, -1);
-
+    // CUDA_CHECK(cudaGetLastError());
 
     const float norm = 1.0 / (fftlen * fftlen);
     int offset = binoffset * ACCEL_NUMBETWEEN;
@@ -1553,11 +2299,15 @@ void *subharm_fderivs_vol_gpu(int numharm, int harmnum, double fullrlo, double f
             offs =  offset_array[stage][harmnum-1];
         
         loops_in_GPU_1(pdata_gpu, fkern_gpu+offs ,tmpdat_gpu, fftlen, numzs);
+        
         // FFTonGPU(tmpdat_gpu, tmpout_gpu,fftlen, numzs, +1, plan_tmpdat_gpu_array[stage][harmnum-1]);
         cufftExecC2C(plan_tmpdat_gpu_array[stage][harmnum-1], tmpdat_gpu, tmpout_gpu, 1);
-
+        // CUDA_CHECK(cudaGetLastError());
+        
         if(obs->inmem)
+        {
             loops_in_GPU_2(tmpout_gpu, outpows_gpu, numrs, numzs,offset, fftlen,norm, outpows_gpu_obs, rlen, rlo*ACCEL_RDR, 1);
+        }
         else
         {
             if(numharm == 1 && harmnum == 1)
@@ -1576,6 +2326,149 @@ void *subharm_fderivs_vol_gpu(int numharm, int harmnum, double fullrlo, double f
     // vect_free(data);
 }
 
+void *subharm_fderivs_vol_gpu_1_list(int numharm, int harmnum, double fullrlo, double fullrhi, subharminfo *shi, accelobs *obs, cufftComplex *fkern_gpu, cufftComplex *pdata_gpu, cufftComplex *tmpdat_gpu, cufftComplex *tmpout_gpu, float *outpows_gpu, float *outpows_gpu_obs, cufftComplex *pdata, int tip, unsigned short *d_zinds_gpu, unsigned short *d_rinds_gpu, unsigned short *zinds_cpu, unsigned short *rinds_cpu, ffdotpows *fundamental, int **offset_array, int stage, cufftComplex *data_gpu, float *powers, int readdatanum, int fftlen_0, double *norm_data_gpu, int outpows_gpu_xlen, int outpows_gpu_obs_xlen)  // int readid
+{ 
+    int ii, jj, numdata, fftlen, binoffset;
+    long long lobin;
+    float powargr, powargi;
+    double drlo, drhi, harm_fract;
+    static fcomplex *data;
+    static int firsttime = 1;
+
+    harm_fract = (double) harmnum / (double) numharm;
+    drlo = calc_required_r(harm_fract, fullrlo);
+    drhi = calc_required_r(harm_fract, fullrhi);
+    long long rlo = (long long) floor(drlo);
+    // register int zlo = calc_required_z(harm_fract, obs->zlo);
+    /* Initialize the lookup indices */
+    // if (numharm > 1 && !obs->inmem) {
+    //     double rr, subr;
+    //     for (ii = 0; ii < obs->corr_uselen; ii++) {
+    //         rr = fullrlo + ii * ACCEL_DR;
+    //         subr = calc_required_r(harm_fract, rr);
+    //         rinds_cpu[ii] = index_from_r(subr, rlo);
+    //     }
+    //     double zz, subz;
+    //     for (ii = 0; ii < obs->numz; ii++) {
+    //         zz = obs->zlo + ii * ACCEL_DZ;
+    //         subz = calc_required_z(harm_fract, zz);
+    //         zinds_cpu[ii] = index_from_z(subz, zlo);
+    //     }
+    // }
+    // The +1 below is important!
+    int numrs = (int) ((ceil(drhi) - floor(drlo))
+                          * ACCEL_RDR + DBLCORRECT) + 1;
+    if (numharm == 1 && harmnum == 1) {
+        numrs = obs->corr_uselen;
+    } else {
+        if (numrs % ACCEL_RDR)
+            numrs = (numrs / ACCEL_RDR + 1) * ACCEL_RDR;
+    }
+    int numzs = shi->numkern_zdim;
+
+    /* Determine the largest kernel halfwidth needed to analyze the current subharmonic */
+    /* Verified numerically that, as long as we have symmetric z's and w's, */
+    /* shi->kern[0][0].kern_half_width is the maximal halfwidth over the range of w's and z's */
+    binoffset = shi->kern[0][0].kern_half_width;
+    fftlen = shi->kern[0][0].fftlen;
+    lobin = rlo - binoffset;
+    numdata = fftlen / ACCEL_NUMBETWEEN;
+
+    if(firsttime)
+    {
+        data = (fcomplex *) malloc(sizeof(fcomplex)*fftlen);
+        firsttime = 0;
+    }
+
+    double norm_data;
+    
+    // cudaDeviceSynchronize();
+    // CUDA_CHECK(cudaGetLastError());
+
+    for(ii=0; ii<readdatanum; ii++)
+    {
+        get_fourier_amplitudes_gpu_list(lobin, numdata, obs, data, ii);
+        cudaMemcpy(data_gpu+ii*numdata, data, sizeof(cufftComplex) * numdata, cudaMemcpyHostToDevice);
+        // CUDA_CHECK(cudaGetLastError());
+
+        for (jj = 0; jj < numdata; jj++)
+            powers[jj] = POWER(data[jj].r, data[jj].i);
+        norm_data = 1.0 / sqrt(median(powers, numdata) / log(2.0));
+        cudaMemcpy(norm_data_gpu+ii, &norm_data, sizeof(double), cudaMemcpyHostToDevice);
+        // cudaDeviceSynchronize();
+        // CUDA_CHECK(cudaGetLastError());
+    }
+    
+
+    // 等待所有操作完成
+    // spread_no_pad_gpu(data_gpu, fftlen / ACCEL_NUMBETWEEN, pdata_gpu, fftlen, ACCEL_NUMBETWEEN, norm_data);
+    spread_no_pad_gpu_list(data_gpu, numdata, pdata_gpu, fftlen, ACCEL_NUMBETWEEN, readdatanum, norm_data_gpu);
+    // cudaDeviceSynchronize();
+    // CUDA_CHECK(cudaGetLastError());
+    
+    // Note COMPLEXFFT is not thread-safe because of wisdom caching
+
+    // FFTonGPU(pdata_gpu, pdata_gpu, fftlen, 1, -1, plan_pdata_gpu_array[stage][harmnum-1]);
+    cufftExecC2C(plan_pdata_gpu_array[stage][harmnum-1], pdata_gpu, pdata_gpu, -1);
+    // cudaDeviceSynchronize();
+    // CUDA_CHECK(cudaGetLastError());
+
+    // printf("cufftExecC2C %d  %d  %d  %d\n", ii, numdata, fftlen, readdatanum);
+
+    const float norm = 1.0 / (fftlen * fftlen);
+    int offset = binoffset * ACCEL_NUMBETWEEN;
+    long long rlen = (obs->highestbin + obs->corr_uselen) * ACCEL_RDR;
+
+    {
+        int offs = 0;
+        if(numharm ==1 && harmnum ==1)
+            offs = 0;
+        else if(numharm > 1)
+            offs =  offset_array[stage][harmnum-1];
+        
+        // loops_in_GPU_1(pdata_gpu, fkern_gpu+offs ,tmpdat_gpu, fftlen, numzs);
+        loops_in_GPU_1_list(pdata_gpu, fkern_gpu+offs ,tmpdat_gpu, fftlen, numzs, readdatanum);
+        // cudaDeviceSynchronize();
+        // CUDA_CHECK(cudaGetLastError());
+        
+        // FFTonGPU(tmpdat_gpu, tmpout_gpu,fftlen, numzs, +1, plan_tmpdat_gpu_array[stage][harmnum-1]);
+        cufftExecC2C(plan_tmpdat_gpu_array[stage][harmnum-1], tmpdat_gpu, tmpout_gpu, 1);
+        // cudaDeviceSynchronize();
+        // CUDA_CHECK(cudaGetLastError());
+        
+        if(obs->inmem)
+        {
+            // loops_in_GPU_2(tmpout_gpu, outpows_gpu, numrs, numzs,offset, fftlen,norm, outpows_gpu_obs, rlen, rlo*ACCEL_RDR, 1);
+            loops_in_GPU_2_list(tmpout_gpu, outpows_gpu, numrs, numzs, offset, fftlen,norm, outpows_gpu_obs, rlen, rlo*ACCEL_RDR, 1, readdatanum, outpows_gpu_xlen, outpows_gpu_obs_xlen);
+            // cudaDeviceSynchronize();
+            // CUDA_CHECK(cudaGetLastError());
+        }
+        else
+        {
+            if(numharm == 1 && harmnum == 1)
+            {
+                // loops_in_GPU_2(tmpout_gpu, outpows_gpu, numrs, numzs,offset, fftlen, norm, outpows_gpu_obs, rlen, rlo*ACCEL_RDR, 0);
+                loops_in_GPU_2_list(tmpout_gpu, outpows_gpu, numrs, numzs, offset, fftlen, norm, outpows_gpu_obs, rlen, rlo*ACCEL_RDR, 0, readdatanum, outpows_gpu_xlen, outpows_gpu_obs_xlen);
+                // cudaDeviceSynchronize();
+                // CUDA_CHECK(cudaGetLastError());
+            }
+            if(numharm > 1)
+            {
+                // cudaMemcpy(d_rinds_gpu, (unsigned short *)rinds_cpu, sizeof(unsigned short)*obs->corr_uselen, cudaMemcpyHostToDevice);
+                // cudaMemcpy(d_zinds_gpu, (unsigned short *)zinds_cpu, sizeof(unsigned short)*obs->numz, cudaMemcpyHostToDevice);
+                // add_subharm_gpu(outpows_gpu, tmpout_gpu, d_rinds_gpu+(int)(((pow(2,stage-1)-1)+harmnum/2)*obs->corr_uselen), d_zinds_gpu+(int)(((pow(2,stage-1)-1)+harmnum/2)*obs->numz), fundamental->numrs, fundamental->numzs, fftlen, numzs,offset, norm);
+                add_subharm_gpu_list(outpows_gpu, tmpout_gpu, d_rinds_gpu+(int)(((pow(2,stage-1)-1)+harmnum/2)*obs->corr_uselen), d_zinds_gpu+(int)(((pow(2,stage-1)-1)+harmnum/2)*obs->numz), fundamental->numrs, fundamental->numzs, fftlen, numzs, offset, norm, readdatanum, outpows_gpu_xlen);
+                // cudaDeviceSynchronize();
+                // CUDA_CHECK(cudaGetLastError());
+            }
+        }
+    }
+
+    // vect_free(data);
+}
+
+
+
 //----------------------initialize cuFFT plans ----------------------
 void init_cuFFT_plans(subharminfo **subharminfs, int numharmstages, int inmem)
 {
@@ -1586,7 +2479,9 @@ void init_cuFFT_plans(subharminfo **subharminfs, int numharmstages, int inmem)
 	fftlen = subharminfs[0][0].kern[0][0].fftlen;
 
 	cufftPlan1d(&plan_pdata_gpu_array[0][0], fftlen, CUFFT_C2C, 1);
+    // CUDA_CHECK(cudaGetLastError());
 	cufftPlan1d(&plan_tmpdat_gpu_array[0][0], fftlen, CUFFT_C2C, numkern);
+    // CUDA_CHECK(cudaGetLastError());
 
 	if (numharmstages > 1 && !inmem) {
 		for(stage=1; stage<numharmstages; stage++){	
@@ -1596,8 +2491,42 @@ void init_cuFFT_plans(subharminfo **subharminfs, int numharmstages, int inmem)
 				fftlen = subharminfs[stage][harm-1].kern[0][0].fftlen;
 
 
-				cufftPlan1d(&plan_pdata_gpu_array[stage][harm-1], fftlen, CUFFT_C2C, 1);		
-				cufftPlan1d(&plan_tmpdat_gpu_array[stage][harm-1], fftlen, CUFFT_C2C, numkern);		
+				cufftPlan1d(&plan_pdata_gpu_array[stage][harm-1], fftlen, CUFFT_C2C, 1);	
+                // CUDA_CHECK(cudaGetLastError());	
+				cufftPlan1d(&plan_tmpdat_gpu_array[stage][harm-1], fftlen, CUFFT_C2C, numkern);	
+                // CUDA_CHECK(cudaGetLastError());	
+			}	
+		}	
+	}
+}
+
+void init_cuFFT_plans_list(subharminfo **subharminfs, int numharmstages, int inmem, int readdatanum)
+{
+	int harm, harmtosum, stage;		
+	int numkern, fftlen;
+	
+	numkern = subharminfs[0][0].numkern;
+	fftlen = subharminfs[0][0].kern[0][0].fftlen;
+
+	cufftPlan1d(&plan_pdata_gpu_array[0][0], fftlen, CUFFT_C2C, readdatanum);
+    // CUDA_CHECK(cudaGetLastError());
+	cufftPlan1d(&plan_tmpdat_gpu_array[0][0], fftlen, CUFFT_C2C, numkern*readdatanum);
+    // cufftPlanMany(&plan_tmpdat_gpu_array[0][0], 1, &fftlen, NULL, 1, fftlen, NULL, 1, fftlen, CUFFT_C2C, numkern*readdatanum);
+    // CUDA_CHECK(cudaGetLastError());
+
+	if (numharmstages > 1 && !inmem) {
+		for(stage=1; stage<numharmstages; stage++){	
+			harmtosum = 1 << stage;
+			for (harm = 1; harm < harmtosum; harm += 2) {
+				numkern = subharminfs[stage][harm-1].numkern;
+				fftlen = subharminfs[stage][harm-1].kern[0][0].fftlen;
+
+
+				cufftPlan1d(&plan_pdata_gpu_array[stage][harm-1], fftlen, CUFFT_C2C, readdatanum);	
+                // CUDA_CHECK(cudaGetLastError());	
+				cufftPlan1d(&plan_tmpdat_gpu_array[stage][harm-1], fftlen, CUFFT_C2C, numkern*readdatanum);
+                // cufftPlanMany(&plan_tmpdat_gpu_array[stage][harm-1], 1, &fftlen, NULL, 1, fftlen, NULL, 1, fftlen, CUFFT_C2C, numkern*readdatanum);
+                // CUDA_CHECK(cudaGetLastError());	
 			}	
 		}	
 	}
@@ -1609,7 +2538,9 @@ void destroy_cuFFT_plans(subharminfo **subharminfs, int numharmstages, int inmem
 	int harm, harmtosum, stage;
 
 	cufftDestroy(plan_pdata_gpu_array[0][0]);
+    CUDA_CHECK(cudaGetLastError());
 	cufftDestroy(plan_tmpdat_gpu_array[0][0]);
+    CUDA_CHECK(cudaGetLastError());
 
     if (numharmstages > 1  && !inmem) {
         for(stage=1; stage<numharmstages; stage++){	
@@ -1617,7 +2548,9 @@ void destroy_cuFFT_plans(subharminfo **subharminfs, int numharmstages, int inmem
             for (harm = 1; harm < harmtosum; harm += 2)
             {
                 cufftDestroy(plan_pdata_gpu_array[stage][harm-1]);
+                CUDA_CHECK(cudaGetLastError());
                 cufftDestroy(plan_tmpdat_gpu_array[stage][harm-1]);
+                CUDA_CHECK(cudaGetLastError());
             }
         }
     }
@@ -1862,6 +2795,16 @@ void inmem_add_subharm_gpu(ffdotpows * fundamental, accelobs * obs, float *outpo
     long long rlen = (obs->highestbin + obs->corr_uselen) * ACCEL_RDR;
 
     inmem_add_ffdotpows_gpu_gpu(outpows_gpu_obs, outpows_gpu, rinds_gpu, zlo, numrs, numzs, stage, rlen);
+}
+
+void inmem_add_subharm_gpu_list(ffdotpows * fundamental, accelobs * obs, float *outpows_gpu, float *outpows_gpu_obs, int stage, int *rinds_gpu, int outpows_gpu_xlen, int readdatanum, int outpows_gpu_obs_xlen)
+{
+    const int numrs = fundamental->numrs;
+    const int numzs = fundamental->numzs;
+    const int zlo = fundamental->zlo;
+    long long rlen = (obs->highestbin + obs->corr_uselen) * ACCEL_RDR;
+
+    inmem_add_ffdotpows_gpu_gpu_list(outpows_gpu_obs, outpows_gpu, rinds_gpu, zlo, numrs, numzs, stage, rlen, outpows_gpu_xlen, readdatanum, outpows_gpu_obs_xlen);
 }
 
 
@@ -2277,6 +3220,15 @@ void create_accelobs(accelobs * obs, infodata * idata, Cmdline * cmd, int usemma
     }
     obs->numharmstages = twon_to_index(cmd->numharm) + 1;
 
+    // if(cmd->cudaP && (obs->mmap_file || obs->dat_input))
+    // {
+    //     fcomplex *temp_gpu;
+    //     cudaMalloc((void**)&temp_gpu, sizeof(fcomplex)*(obs->numbins+ACCEL_PADDING));
+    //     cudaMemcpy(temp_gpu, obs->fft-ACCEL_PADDING/2, sizeof(fcomplex) * (obs->numbins+ACCEL_PADDING), cudaMemcpyHostToDevice);
+    //     obs->fft_gpu = temp_gpu+ACCEL_PADDING/2;
+    // }
+            
+
     obs->dz = ACCEL_DZ;
     obs->numz = (cmd->zmax / ACCEL_DZ) * 2 + 1;
     
@@ -2433,6 +3385,820 @@ void create_accelobs(accelobs * obs, infodata * idata, Cmdline * cmd, int usemma
             obs->ffdotplane = NULL;
         }
     }
+
+    
+
+}
+
+void create_accelobs_list(accelobs *obs, infodata *idata, 
+		     Cmdline *cmd, int usemmap, int thread, int kk, int readdatanum)
+{
+    int ii, jj, input_shorts = 0;
+    static int firsttime = 1;
+
+    
+    {     
+        for(ii = 0; ii < readdatanum; ii++)
+        {
+            int hassuffix = 0;
+            char *suffix;
+            printf("%s\n", cmd->datalist[ii+kk*cmd->gpu]);
+            hassuffix = split_root_suffix(cmd->datalist[ii+kk*cmd->gpu], &(obs->rootfilenmlist[ii]), &suffix);
+
+            if (hassuffix) {
+                if (strcmp(suffix, "fft") != 0 &&
+                    strcmp(suffix, "dat") != 0 && strcmp(suffix, "sdat") != 0) {
+                    printf
+                        ("\nInput file ('%s') must be an '.fft' or '.[s]dat' file!\n\n",
+                        cmd->datalist[ii+kk*cmd->gpu]);
+                    free(suffix);
+                    exit(0);
+                }
+                /* If the input file is a time series */
+                if (strcmp(suffix, "dat") == 0 || strcmp(suffix, "sdat") == 0) {
+                    obs->dat_input = 1;
+                    obs->mmap_file = 0;
+                    if (strcmp(suffix, "sdat") == 0)
+                        input_shorts = 1;
+                }
+                else {
+                    obs->dat_input = 0;
+                }
+                free(suffix);
+            } else {
+                printf("\nInput file ('%s') must be an '.fft' or '.[s]dat' file!\n\n",
+                    cmd->datalist[ii+kk*cmd->gpu]);
+                exit(0);
+            }
+        }
+    }
+
+
+    if(firsttime)
+    {
+        if (cmd->noharmpolishP)
+            obs->use_harmonic_polishing = 0;
+        else
+            obs->use_harmonic_polishing = 1;        // now default
+        obs->cudaP = cmd->cudaP;  
+    }
+    
+
+    
+    /* Read the info file */
+    for(ii=0; ii<readdatanum; ii++)
+    {
+        readinf(&idata[ii], obs->rootfilenmlist[ii]);
+    }
+
+    
+    /* Prepare the input time series if required */
+
+
+    if (obs->dat_input) {
+        FILE *datfile;
+        long long filelen;
+        float *ftmp;
+        
+        printf("Reading and FFTing the time series...");
+        fflush(NULL);
+
+        for(jj=0; jj < readdatanum; jj++)
+        {           
+            datfile = chkfopen(cmd->datalist[jj+kk*cmd->gpu], "rb");
+            /* Check the length of the file to see if we can handle it */
+            filelen = chkfilelen(datfile, sizeof(float));
+            if (input_shorts)
+                filelen *= 2;
+            // if (filelen > 67108864) {       /* Small since we need memory for the templates */
+            //     printf
+            //         ("\nThe input time series is too large.  Use 'realfft' first.\n\n");
+            //     exit(0);
+            // }
+
+            /* Read the time series into a temporary buffer */
+            /* Note:  The padding allows us to search very short time series */
+            /*        using correlations without having to worry about       */
+            /*        accessing data before or after the valid FFT freqs.    */
+            
+            if(firsttime)
+                // obs->fftlist[jj] = (fcomplex *)malloc((filelen + 2 * ACCEL_PADDING) * sizeof(fcomplex));
+                obs->fftlist_f[jj] = (float *)malloc((filelen + 2 * ACCEL_PADDING) * sizeof(float));
+
+            
+            if (input_shorts) {
+                short *stmp = gen_svect(filelen);
+                // ftmp = gen_fvect(filelen + 2 * ACCEL_PADDING);
+                ftmp = obs->fftlist_f[jj];
+                for (ii = 0; ii < ACCEL_PADDING; ii++) {
+                    ftmp[ii] = 0.0;
+                    ftmp[ii + filelen + ACCEL_PADDING] = 0.0;
+                }
+                chkfread(stmp, sizeof(short), filelen, datfile);
+                for (ii = 0; ii < filelen; ii++)
+                    ftmp[ii + ACCEL_PADDING] = (float) stmp[ii];
+                vect_free(stmp);
+            } else {
+                // ftmp = read_float_file(datfile, -ACCEL_PADDING,
+                //                     filelen + 2 * ACCEL_PADDING);
+                ftmp = obs->fftlist_f[jj];
+                read_float_file_list(datfile, -ACCEL_PADDING,
+                                    filelen + 2 * ACCEL_PADDING, ftmp);
+            }
+            /* Now, offset the pointer so that we are pointing at the first */
+            /* bits of valid data.                                          */
+            ftmp += ACCEL_PADDING;
+            fclose(datfile);
+
+            /* FFT it */
+            // realfft(ftmp, filelen, -1);
+            obs->fftfilelist[jj] = NULL;
+            obs->fftlist_f[jj] = ftmp;
+            obs->numbins = filelen / 2;
+
+            /* De-redden it */
+            // printf("Removing red-noise...");
+            // deredden(obs->fftlist[ii], obs->numbins);
+            // printf("done.\n\n");
+        }
+        printf("Removing red-noise...");
+        
+        if(firsttime)
+        {
+            realfft(obs->fftlist_f[0], filelen, -1);
+            #ifdef _OPENMP
+            #pragma omp parallel for num_threads(thread) shared(obs, filelen, cmd)
+            #endif
+            for(ii=1; ii < readdatanum; ii++)
+                realfft(obs->fftlist_f[ii], filelen, -1);
+        }
+        else
+        {
+            #ifdef _OPENMP
+            #pragma omp parallel for num_threads(thread) shared(obs, filelen, cmd)
+            #endif
+            for(ii=0; ii < readdatanum; ii++)
+                realfft(obs->fftlist_f[ii], filelen, -1);
+        }
+
+        obs->fftlist = (fcomplex **) obs->fftlist_f;
+
+        #ifdef _OPENMP
+        #pragma omp parallel for num_threads(thread) shared(obs)
+        #endif
+        for(ii=0; ii < readdatanum; ii++)
+            deredden(obs->fftlist[ii], obs->numbins);   
+        printf("done.\n\n");
+    }
+
+
+    /* Open the FFT file if it exists appropriately */
+    if (!obs->dat_input) {
+        for(ii=0; ii < readdatanum; ii++)
+        {
+            obs->fftfilelist[ii] = chkfopen(cmd->datalist[ii+kk*cmd->gpu], "rb");
+            obs->numbins = chkfilelen(obs->fftfilelist[ii], sizeof(fcomplex));
+            if (usemmap) {
+                fclose(obs->fftfilelist[ii]);
+                obs->fftfilelist[ii] = NULL;
+                printf("Memory mapping the input FFT.  This may take a while...\n");
+                obs->mmap_file = open(cmd->datalist[ii+kk*cmd->gpu], O_RDONLY);
+                if (obs->mmap_file == -1) {
+                    perror("\nError in open() in accel_utils.c");
+                    printf("\n");
+                    exit(-1);
+                }
+                obs->fftlist[ii] =
+                    (fcomplex *) mmap(0, sizeof(fcomplex) * obs->numbins, PROT_READ,
+                                    MAP_SHARED, obs->mmap_file, 0);
+                if (obs->fftlist[ii] == MAP_FAILED) {
+                    perror("\nError in mmap() in accel_utils.c");
+                    printf("Falling back to a non-mmaped approach\n");
+                    obs->fftfilelist[ii] = chkfopen(cmd->datalist[ii+kk*cmd->gpu], "rb");
+                    obs->mmap_file = 0;
+                }
+            } else {
+                obs->mmap_file = 0;
+            }
+        }
+
+    }
+
+    /* Determine the other parameters */
+    
+    if (cmd->zmax % ACCEL_DZ)
+        cmd->zmax = (cmd->zmax / ACCEL_DZ + 1) * ACCEL_DZ;
+    obs->N = (long long) idata[0].N;
+    if (cmd->photonP) {
+        if (obs->mmap_file || obs->dat_input) {
+            obs->nph = obs->fftlist[0][0].r;
+        } else {
+            obs->nph = get_numphotons(obs->fftfilelist[0]);
+        }
+        printf("Normalizing powers using %.0f photons.\n\n", obs->nph);
+    } else {
+        obs->nph = 0.0;
+        /* For short FFTs insure that we don't pick up the DC */
+        /* or Nyquist component as part of the interpolation  */
+        /* for higher frequencies.                            */
+        if (cmd->locpowP) {
+            obs->norm_type = 1;
+            printf("Normalizing powers using local-power determination.\n\n");
+        } else if (cmd->medianP) {
+            obs->norm_type = 0;
+            printf("Normalizing powers using median-blocks.\n\n");
+        } else {
+            obs->norm_type = 0;
+            printf("Normalizing powers using median-blocks (default).\n\n");
+        }
+        if (obs->dat_input) {
+            for(ii=0; ii < readdatanum; ii++)
+            {
+                obs->fftlist[ii][0].r = 1.0;
+                obs->fftlist[ii][0].i = 1.0;
+            }
+        }
+    }
+
+    if(firsttime)
+    {
+        obs->lobin = cmd->lobin;
+        if (obs->lobin > 0) {
+            obs->nph = 0.0;
+            if (cmd->lobin > obs->numbins - 1) {
+                printf("\n'lobin' is greater than the total number of\n");
+                printf("   frequencies in the data set.  Exiting.\n\n");
+                exit(1);
+            }
+        }
+        if (cmd->numharm != 1 &&
+            cmd->numharm != 2 &&
+            cmd->numharm != 4 &&
+            cmd->numharm != 8 &&
+            cmd->numharm != 16 &&
+            cmd->numharm != 32) {
+            printf("\n'numharm' = %d must be a power-of-two!  Exiting\n\n",
+                cmd->numharm);
+            exit(1);
+        }
+        obs->numharmstages = twon_to_index(cmd->numharm) + 1;
+
+        obs->dz = ACCEL_DZ;
+        obs->numz = (cmd->zmax / ACCEL_DZ) * 2 + 1;
+        
+        /* Setting extra parameters for jerk search */
+        if (cmd->wmaxP) {
+            if (cmd->wmax % ACCEL_DW)
+                cmd->wmax = (cmd->wmax / ACCEL_DW + 1) * ACCEL_DW;
+            obs->whi = cmd->wmax;
+            obs->wlo = -cmd->wmax;
+            obs->dw = ACCEL_DW;
+            obs->numw = (cmd->wmax / ACCEL_DW) * 2 + 1;
+            if (cmd->wmax==0.0)
+                obs->numw = 0;
+            printf("Jerk search enabled with maximum fdotdot wmax = %d\n", cmd->wmax);
+        } else {
+            obs->whi = 0.0;
+            obs->wlo = 0.0;
+            obs->dw = 0.0;
+            obs->numw = 0;
+        }
+    }
+    
+    
+
+    /* Determine the output filenames */
+    for(ii=0; ii<readdatanum; ii++)
+    {
+        if (obs->numw) {
+            sprintf(obs->candnmlist[ii], "%s_ACCEL_%d_JERK_%d.cand", obs->rootfilenmlist[ii], cmd->zmax, cmd->wmax);
+            sprintf(obs->accelnmlist[ii], "%s_ACCEL_%d_JERK_%d", obs->rootfilenmlist[ii], cmd->zmax, cmd->wmax);
+            sprintf(obs->workfilenmlist[ii], "%s_ACCEL_%d_JERK_%d.txtcand", obs->rootfilenmlist[ii], cmd->zmax, cmd->wmax);
+        } else {
+            sprintf(obs->candnmlist[ii], "%s_ACCEL_%d.cand", obs->rootfilenmlist[ii], cmd->zmax);
+            sprintf(obs->accelnmlist[ii], "%s_ACCEL_%d", obs->rootfilenmlist[ii], cmd->zmax);
+            sprintf(obs->workfilenmlist[ii], "%s_ACCEL_%d.txtcand", obs->rootfilenmlist[ii], cmd->zmax);
+        }
+        if (!obs->dat_input)
+            obs->workfilelist[ii] = chkfopen(obs->workfilenmlist[ii], "w");
+    }
+    
+
+    if(firsttime)
+    {
+        obs->numbetween = ACCEL_NUMBETWEEN;
+        obs->dt = idata[0].dt;
+        obs->T = idata[0].dt * idata[0].N;
+        if (cmd->floP) {
+            obs->rlo = floor(cmd->flo * obs->T);
+            if (obs->rlo < obs->lobin)
+                obs->rlo = obs->lobin;
+            if (obs->rlo > obs->numbins - 1) {
+                printf("\nLow frequency to search 'flo' is greater than\n");
+                printf("   the highest available frequency.  Exiting.\n\n");
+                exit(1);
+            }
+        } else {
+            if (cmd->rloP)
+                obs->rlo = cmd->rlo;
+            else
+                obs->rlo = 1.0;
+            if (obs->rlo < obs->lobin)
+                obs->rlo = obs->lobin;
+            if (obs->rlo > obs->numbins - 1) {
+                printf("\nLow frequency to search 'rlo' is greater than\n");
+                printf("   the available number of points.  Exiting.\n\n");
+                exit(1);
+            }
+        }
+
+        obs->highestbin = obs->numbins - 1;
+        if (cmd->fhiP) {
+            obs->highestbin = ceil(cmd->fhi * obs->T);
+            if (obs->highestbin > obs->numbins - 1)
+                obs->highestbin = obs->numbins - 1;
+            obs->rhi = obs->highestbin;
+            if (obs->highestbin < obs->rlo) {
+                printf("\nHigh frequency to search 'fhi' is less than\n");
+                printf("   the lowest frequency to search 'flo'.  Exiting.\n\n");
+                exit(1);
+            }
+        } else if (cmd->rhiP) {
+            obs->highestbin = cmd->rhi;
+            if (obs->highestbin > obs->numbins - 1)
+                obs->highestbin = obs->numbins - 1;
+            obs->rhi = obs->highestbin;
+            if (obs->highestbin < obs->rlo) {
+                printf("\nHigh frequency to search 'rhi' is less than\n");
+                printf("   the lowest frequency to search 'rlo'.  Exiting.\n\n");
+                exit(1);
+            }
+        }
+        obs->dr = ACCEL_DR;
+        obs->zhi = cmd->zmax;
+        obs->zlo = -cmd->zmax;
+        obs->sigma = cmd->sigma;
+        obs->powcut = (float *) malloc(obs->numharmstages * sizeof(float));
+        obs->numindep = (long long *) malloc(obs->numharmstages * sizeof(long long));
+        for (ii = 0; ii < obs->numharmstages; ii++) {
+            if (obs->numz == 1 && obs->numw == 0)
+                obs->numindep[ii] = (obs->rhi - obs->rlo) / index_to_twon(ii);
+            else if (obs->numz > 1 && obs->numw == 0)
+                /* The numz+1 takes care of the small amount of  */
+                /* search we get above zmax and below zmin.      */
+                obs->numindep[ii] = (obs->rhi - obs->rlo) * (obs->numz + 1) *
+                    (obs->dz / 6.95) / index_to_twon(ii);
+            else
+                /* The numw+1 takes care of the small amount of  */
+                /* search we get above wmax and below wmin.      */
+                obs->numindep[ii] = (obs->rhi - obs->rlo) * \
+                    (obs->numz + 1) * (obs->dz / 6.95) *        \
+                    (obs->numw + 1) * (obs->dw / 44.2) / index_to_twon(ii);
+            obs->powcut[ii] = power_for_sigma(obs->sigma,
+                                            index_to_twon(ii), obs->numindep[ii]);
+        }
+        obs->numzap = 0;
+        /*
+        if (zapfile!=NULL)
+        obs->numzap = get_birdies(cmd->zapfile, obs->T, obs->baryv, 
+        &(obs->lobins), &(obs->hibins));
+        else
+        obs->numzap = 0;
+        */
+        /* Determine corr_uselen from zmax and wmax */
+        obs->maxkernlen = 2 * ACCEL_NUMBETWEEN * w_resp_halfwidth(obs->zhi, obs->whi, LOWACC);
+        obs->fftlen = fftlen_from_kernwidth(obs->maxkernlen);
+        if (obs->fftlen < 2048)
+            obs->fftlen = 2048;  // This gives slightly better speed empirically
+        obs->corr_uselen = obs->fftlen - obs->maxkernlen;
+        // Make sure that obs->corr_uselen is an integer number of
+        // full (i.e. un-interpolated) Fourier bins
+        if (obs->corr_uselen % ACCEL_RDR)
+            obs->corr_uselen = obs->corr_uselen / ACCEL_RDR * ACCEL_RDR;
+
+        /* Can we perform the search in-core memory? */
+        {
+            long long memuse;
+            // double gb = (double) (1L << 30);
+
+            if (cmd->wmaxP) {
+                memuse = sizeof(float) * (obs->highestbin + obs->corr_uselen)
+                    * obs->numbetween * obs->numz * obs->numw;
+            } else {
+                memuse = sizeof(float) * (obs->highestbin + obs->corr_uselen)
+                    * obs->numbetween * obs->numz;
+            }
+
+            // This is the size of powers covering the full f-dot-dot plane to search
+            // Need the extra obs->corr_uselen since we generate the plane in blocks
+            if (!cmd->wmaxP && cmd->inmemP) 
+            // if (!cmd->wmaxP &&  cmd->inmemP) 
+            {
+                printf("using in-memory accelsearch.\n\n");
+                obs->inmem = 1;
+                if(!cmd->cudaP)
+                    obs->ffdotplane = gen_fvect(memuse / sizeof(float));
+            } else {
+                printf("using standard accelsearch.\n\n");
+                obs->inmem = 0;
+                obs->ffdotplane = NULL;
+            }
+        }
+    }
+    else
+        firsttime = 0;
+    
+    
+}
+
+void create_accelobs_list_1(accelobs * obs, infodata * idata, Cmdline * cmd, int usemmap, int readid)
+{
+    int ii, rootlen, input_shorts = 0;
+    static int firsttime = 1;
+    static float *ftmp_bk;
+
+    {
+        int hassuffix = 0;
+        char *suffix;
+        
+        printf("%s\n", cmd->datalist[readid]);
+        hassuffix = split_root_suffix(cmd->datalist[readid], &(obs->rootfilenm), &suffix);
+        // hassuffix = split_root_suffix(cmd->argv[0], &(obs->rootfilenm), &suffix);
+        if (hassuffix) {
+            if (strcmp(suffix, "fft") != 0 &&
+                strcmp(suffix, "dat") != 0 && strcmp(suffix, "sdat") != 0) {
+                printf
+                    ("\nInput file ('%s') must be an '.fft' or '.[s]dat' file!\n\n",
+                     cmd->datalist[readid]);
+                free(suffix);
+                exit(0);
+            }
+            /* If the input file is a time series */
+            if (strcmp(suffix, "dat") == 0 || strcmp(suffix, "sdat") == 0) {
+                obs->dat_input = 1;
+                obs->mmap_file = 0;
+                if (strcmp(suffix, "sdat") == 0)
+                    input_shorts = 1;
+            }
+            else {
+                obs->dat_input = 0;
+            }
+
+            // if(strcmp(suffix, "fft") == 0 && obs->cudaP) 
+            // {
+            //     printf("\nInput file ('%s') must be an '.[s]dat' file  with CUDA !\n\n",cmd->argv[0]);
+            //     free(suffix);
+            //     exit(0);
+            // }
+
+            free(suffix);
+        } else {
+            printf("\nInput file ('%s') must be an '.fft' or '.[s]dat' file!\n\n",
+                   cmd->datalist[readid]);
+            exit(0);
+        }
+    }
+
+
+
+    if (cmd->noharmpolishP)
+        obs->use_harmonic_polishing = 0;
+    else
+        obs->use_harmonic_polishing = 1;        // now default
+
+    /* Read the info file */
+
+    readinf(idata, obs->rootfilenm);
+    if (strlen(remove_whitespace(idata->object)) > 0) {
+        printf("Analyzing %s data from '%s'.\n\n",
+               remove_whitespace(idata->object), cmd->datalist[readid]);
+    } else {
+        printf("Analyzing data from '%s'.\n\n", cmd->datalist[readid]);
+    }
+    obs->cudaP = cmd->cudaP;
+    /* Prepare the input time series if required */
+
+    if (obs->dat_input) {
+        FILE *datfile;
+        long long filelen;
+        float *ftmp;
+
+        printf("Reading and FFTing the time series...");
+        fflush(NULL);
+        datfile = chkfopen(cmd->datalist[readid], "rb");
+
+        /* Check the length of the file to see if we can handle it */
+        filelen = chkfilelen(datfile, sizeof(float));
+        if (input_shorts)
+            filelen *= 2;
+        // if (filelen > 67108864) {       /* Small since we need memory for the templates */
+        //     printf
+        //         ("\nThe input time series is too large.  Use 'realfft' first.\n\n");
+        //     exit(0);
+        // }
+
+        /* Read the time series into a temporary buffer */
+        /* Note:  The padding allows us to search very short time series */
+        /*        using correlations without having to worry about       */
+        /*        accessing data before or after the valid FFT freqs.    */
+        if (input_shorts) {
+            short *stmp = gen_svect(filelen);
+            
+            if(firsttime)
+            {
+                ftmp = gen_fvect(filelen + 2 * ACCEL_PADDING);
+                ftmp_bk = ftmp;
+            }
+            else
+                ftmp = ftmp_bk;
+
+            for (ii = 0; ii < ACCEL_PADDING; ii++) {
+                ftmp[ii] = 0.0;
+                ftmp[ii + filelen + ACCEL_PADDING] = 0.0;
+            }
+            chkfread(stmp, sizeof(short), filelen, datfile);
+            for (ii = 0; ii < filelen; ii++)
+                ftmp[ii + ACCEL_PADDING] = (float) stmp[ii];
+            vect_free(stmp);
+        } else {
+            ftmp =
+                read_float_file(datfile, -ACCEL_PADDING,
+                                filelen + 2 * ACCEL_PADDING);
+        }
+        /* Now, offset the pointer so that we are pointing at the first */
+        /* bits of valid data.                                          */
+        ftmp += ACCEL_PADDING;
+        fclose(datfile);
+
+        /* FFT it */
+        realfft(ftmp, filelen, -1);
+        obs->fftfile = NULL;
+        obs->fft = (fcomplex *) ftmp;
+        obs->numbins = filelen / 2;
+        printf("done.\n");
+
+        /* De-redden it */
+        printf("Removing red-noise...");
+        deredden(obs->fft, obs->numbins);
+        printf("done.\n\n");
+    }
+
+    /* Open the FFT file if it exists appropriately */
+    if (!obs->dat_input) {
+        obs->fftfile = chkfopen(cmd->datalist[readid], "rb");
+        obs->numbins = chkfilelen(obs->fftfile, sizeof(fcomplex));
+        if (usemmap) {
+            fclose(obs->fftfile);
+            obs->fftfile = NULL;
+            printf("Memory mapping the input FFT.  This may take a while...\n");
+            obs->mmap_file = open(cmd->datalist[readid], O_RDONLY);
+            if (obs->mmap_file == -1) {
+                perror("\nError in open() in accel_utils.c");
+                printf("\n");
+                exit(-1);
+            }
+            obs->fft =
+                (fcomplex *) mmap(0, sizeof(fcomplex) * obs->numbins, PROT_READ,
+                                  MAP_SHARED, obs->mmap_file, 0);
+            if (obs->fft == MAP_FAILED) {
+                perror("\nError in mmap() in accel_utils.c");
+                printf("Falling back to a non-mmaped approach\n");
+                obs->fftfile = chkfopen(cmd->datalist[readid], "rb");
+                obs->mmap_file = 0;
+            }
+        } else {
+            obs->mmap_file = 0;
+        }
+    }
+
+    /* Determine the other parameters */
+
+    if (cmd->zmax % ACCEL_DZ)
+        cmd->zmax = (cmd->zmax / ACCEL_DZ + 1) * ACCEL_DZ;
+    obs->N = (long long) idata->N;
+    if (cmd->photonP) {
+        if (obs->mmap_file || obs->dat_input) {
+            obs->nph = obs->fft[0].r;
+        } else {
+            obs->nph = get_numphotons(obs->fftfile);
+        }
+        printf("Normalizing powers using %.0f photons.\n\n", obs->nph);
+    } else {
+        obs->nph = 0.0;
+        /* For short FFTs insure that we don't pick up the DC */
+        /* or Nyquist component as part of the interpolation  */
+        /* for higher frequencies.                            */
+        if (cmd->locpowP) {
+            obs->norm_type = 1;
+            printf("Normalizing powers using local-power determination.\n\n");
+        } else if (cmd->medianP) {
+            obs->norm_type = 0;
+            printf("Normalizing powers using median-blocks.\n\n");
+        } else {
+            obs->norm_type = 0;
+            printf("Normalizing powers using median-blocks (default).\n\n");
+        }
+        if (obs->dat_input) {
+            obs->fft[0].r = 1.0;
+            obs->fft[0].i = 1.0;
+        }
+    }
+
+    if(firsttime)
+    {
+        obs->lobin = cmd->lobin;
+        if (obs->lobin > 0) {
+            obs->nph = 0.0;
+            if (cmd->lobin > obs->numbins - 1) {
+                printf("\n'lobin' is greater than the total number of\n");
+                printf("   frequencies in the data set.  Exiting.\n\n");
+                exit(1);
+            }
+        }
+        if (cmd->numharm != 1 &&
+            cmd->numharm != 2 &&
+            cmd->numharm != 4 &&
+            cmd->numharm != 8 &&
+            cmd->numharm != 16 &&
+            cmd->numharm != 32) {
+            printf("\n'numharm' = %d must be a power-of-two!  Exiting\n\n",
+                cmd->numharm);
+            exit(1);
+        }
+        obs->numharmstages = twon_to_index(cmd->numharm) + 1;
+
+        // if(cmd->cudaP && (obs->mmap_file || obs->dat_input))
+        // {
+        //     fcomplex *temp_gpu;
+        //     cudaMalloc((void**)&temp_gpu, sizeof(fcomplex)*(obs->numbins+ACCEL_PADDING));
+        //     cudaMemcpy(temp_gpu, obs->fft-ACCEL_PADDING/2, sizeof(fcomplex) * (obs->numbins+ACCEL_PADDING), cudaMemcpyHostToDevice);
+        //     obs->fft_gpu = temp_gpu+ACCEL_PADDING/2;
+        // }
+
+        obs->dz = ACCEL_DZ;
+        obs->numz = (cmd->zmax / ACCEL_DZ) * 2 + 1;
+        
+        /* Setting extra parameters for jerk search */
+        if (cmd->wmaxP) {
+            if (cmd->wmax % ACCEL_DW)
+                cmd->wmax = (cmd->wmax / ACCEL_DW + 1) * ACCEL_DW;
+            obs->whi = cmd->wmax;
+            obs->wlo = -cmd->wmax;
+            obs->dw = ACCEL_DW;
+            obs->numw = (cmd->wmax / ACCEL_DW) * 2 + 1;
+            if (cmd->wmax==0.0)
+                obs->numw = 0;
+            printf("Jerk search enabled with maximum fdotdot wmax = %d\n", cmd->wmax);
+        } else {
+            obs->whi = 0.0;
+            obs->wlo = 0.0;
+            obs->dw = 0.0;
+            obs->numw = 0;
+        }
+    }
+    
+    
+    /* Determine the output filenames */
+    rootlen = strlen(obs->rootfilenm) + 45;
+    obs->candnm = (char *) calloc(rootlen, 1);
+    obs->accelnm = (char *) calloc(rootlen, 1);
+    obs->workfilenm = (char *) calloc(rootlen, 1);
+    if (obs->numw) {
+        sprintf(obs->candnm, "%s_ACCEL_%d_JERK_%d.cand", obs->rootfilenm, cmd->zmax, cmd->wmax);
+        sprintf(obs->accelnm, "%s_ACCEL_%d_JERK_%d", obs->rootfilenm, cmd->zmax, cmd->wmax);
+        sprintf(obs->workfilenm, "%s_ACCEL_%d_JERK_%d.txtcand", obs->rootfilenm, cmd->zmax, cmd->wmax);
+    } else {
+        sprintf(obs->candnm, "%s_ACCEL_%d.cand", obs->rootfilenm, cmd->zmax);
+        sprintf(obs->accelnm, "%s_ACCEL_%d", obs->rootfilenm, cmd->zmax);
+        sprintf(obs->workfilenm, "%s_ACCEL_%d.txtcand", obs->rootfilenm, cmd->zmax);
+    }
+    if (!obs->dat_input)
+        obs->workfile = chkfopen(obs->workfilenm, "w");
+
+    if(firsttime)
+    {
+        obs->numbetween = ACCEL_NUMBETWEEN;
+        obs->dt = idata->dt;
+        obs->T = idata->dt * idata->N;
+        if (cmd->floP) {
+            obs->rlo = floor(cmd->flo * obs->T);
+            if (obs->rlo < obs->lobin)
+                obs->rlo = obs->lobin;
+            if (obs->rlo > obs->numbins - 1) {
+                printf("\nLow frequency to search 'flo' is greater than\n");
+                printf("   the highest available frequency.  Exiting.\n\n");
+                exit(1);
+            }
+        } else {
+            if (cmd->rloP)
+                obs->rlo = cmd->rlo;
+            else
+                obs->rlo = 1.0;
+            if (obs->rlo < obs->lobin)
+                obs->rlo = obs->lobin;
+            if (obs->rlo > obs->numbins - 1) {
+                printf("\nLow frequency to search 'rlo' is greater than\n");
+                printf("   the available number of points.  Exiting.\n\n");
+                exit(1);
+            }
+        }
+        obs->highestbin = obs->numbins - 1;
+        if (cmd->fhiP) {
+            obs->highestbin = ceil(cmd->fhi * obs->T);
+            if (obs->highestbin > obs->numbins - 1)
+                obs->highestbin = obs->numbins - 1;
+            obs->rhi = obs->highestbin;
+            if (obs->highestbin < obs->rlo) {
+                printf("\nHigh frequency to search 'fhi' is less than\n");
+                printf("   the lowest frequency to search 'flo'.  Exiting.\n\n");
+                exit(1);
+            }
+        } else if (cmd->rhiP) {
+            obs->highestbin = cmd->rhi;
+            if (obs->highestbin > obs->numbins - 1)
+                obs->highestbin = obs->numbins - 1;
+            obs->rhi = obs->highestbin;
+            if (obs->highestbin < obs->rlo) {
+                printf("\nHigh frequency to search 'rhi' is less than\n");
+                printf("   the lowest frequency to search 'rlo'.  Exiting.\n\n");
+                exit(1);
+            }
+        }
+        obs->dr = ACCEL_DR;
+        obs->zhi = cmd->zmax;
+        obs->zlo = -cmd->zmax;
+        obs->sigma = cmd->sigma;
+        obs->powcut = (float *) malloc(obs->numharmstages * sizeof(float));
+        obs->numindep = (long long *) malloc(obs->numharmstages * sizeof(long long));
+        for (ii = 0; ii < obs->numharmstages; ii++) {
+            if (obs->numz == 1 && obs->numw == 0)
+                obs->numindep[ii] = (obs->rhi - obs->rlo) / index_to_twon(ii);
+            else if (obs->numz > 1 && obs->numw == 0)
+                /* The numz+1 takes care of the small amount of  */
+                /* search we get above zmax and below zmin.      */
+                obs->numindep[ii] = (obs->rhi - obs->rlo) * (obs->numz + 1) *
+                    (obs->dz / 6.95) / index_to_twon(ii);
+            else
+                /* The numw+1 takes care of the small amount of  */
+                /* search we get above wmax and below wmin.      */
+                obs->numindep[ii] = (obs->rhi - obs->rlo) * \
+                    (obs->numz + 1) * (obs->dz / 6.95) *        \
+                    (obs->numw + 1) * (obs->dw / 44.2) / index_to_twon(ii);
+            obs->powcut[ii] = power_for_sigma(obs->sigma,
+                                            index_to_twon(ii), obs->numindep[ii]);
+        }
+        obs->numzap = 0;
+        /*
+        if (zapfile!=NULL)
+        obs->numzap = get_birdies(cmd->zapfile, obs->T, obs->baryv, 
+        &(obs->lobins), &(obs->hibins));
+        else
+        obs->numzap = 0;
+        */
+
+        /* Determine corr_uselen from zmax and wmax */
+        obs->maxkernlen = 2 * ACCEL_NUMBETWEEN * w_resp_halfwidth(obs->zhi, obs->whi, LOWACC);
+        obs->fftlen = fftlen_from_kernwidth(obs->maxkernlen);
+        if (obs->fftlen < 2048)
+            obs->fftlen = 2048;  // This gives slightly better speed empirically
+        obs->corr_uselen = obs->fftlen - obs->maxkernlen;
+        // Make sure that obs->corr_uselen is an integer number of
+        // full (i.e. un-interpolated) Fourier bins
+        if (obs->corr_uselen % ACCEL_RDR)
+            obs->corr_uselen = obs->corr_uselen / ACCEL_RDR * ACCEL_RDR;
+
+        /* Can we perform the search in-core memory? */
+        {
+            long long memuse;
+            // double gb = (double) (1L << 30);
+
+            if (cmd->wmaxP) {
+                memuse = sizeof(float) * (obs->highestbin + obs->corr_uselen)
+                    * obs->numbetween * obs->numz * obs->numw;
+            } else {
+                memuse = sizeof(float) * (obs->highestbin + obs->corr_uselen)
+                    * obs->numbetween * obs->numz;
+            }
+
+            // This is the size of powers covering the full f-dot-dot plane to search
+            // Need the extra obs->corr_uselen since we generate the plane in blocks
+            if (!cmd->wmaxP && cmd->inmemP) 
+            // if (!cmd->wmaxP &&  cmd->inmemP) 
+            {
+                printf("using in-memory accelsearch.\n\n");
+                obs->inmem = 1;
+                if(!cmd->cudaP)
+                    obs->ffdotplane = gen_fvect(memuse / sizeof(float));
+            } else {
+                printf("using standard accelsearch.\n\n");
+                obs->inmem = 0;
+                obs->ffdotplane = NULL;
+            }
+        }
+    }
+    else
+        firsttime = 0;
+    
 }
 
 
@@ -2450,6 +4216,47 @@ void free_accelobs(accelobs * obs)
     free(obs->candnm);
     free(obs->accelnm);
     free(obs->workfilenm);
+    if (obs->numzap) {
+        free(obs->lobins);
+        free(obs->hibins);
+    }
+    if (obs->inmem && !obs->cudaP) {
+        vect_free(obs->ffdotplane);
+    }
+}
+
+void free_accelobs_list(accelobs *obs)
+{
+    int ii;
+    if (obs->mmap_file)
+        close(obs->mmap_file);
+    else if (obs->dat_input)
+    {
+        for(ii=0;ii<obs->gpu;ii++)
+            free(obs->fftlist[ii]- ACCEL_PADDING / 2);
+        free(obs->fftlist);
+    }
+    else
+    {
+        for(ii=0;ii<obs->gpu;ii++)
+            free(obs->fftfilelist[ii]);
+        free(obs->fftfilelist);
+    }
+    free(obs->powcut);
+    free(obs->numindep);
+    
+    for(ii=0;ii<obs->gpu;ii++)
+    {
+        free(obs->rootfilenmlist[ii]);
+        free(obs->candnmlist[ii]);
+        free(obs->accelnmlist[ii]);
+        free(obs->workfilenmlist[ii]);
+    }
+    free(obs->rootfilenmlist);
+    free(obs->candnmlist);
+    free(obs->accelnmlist);
+    free(obs->workfilenmlist);
+    
     if (obs->numzap) {
         free(obs->lobins);
         free(obs->hibins);

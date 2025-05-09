@@ -1,10 +1,13 @@
 #include "cuda.cuh"
+
+
 // #include <thrust/host_vector.h>
 // #include <thrust/device_vector.h>
 #include <thrust/device_ptr.h>
 #include <thrust/reduce.h>
 #include <thrust/sort.h>
 #include <thrust/transform_reduce.h>
+#include <thrust/partition.h>
 
 
 #define MAX_BLOCK_SZ 512
@@ -18,6 +21,8 @@
 /* Simple linear interpolation macro */
 #define LININTERP(X, xlo, xhi, ylo, yhi) \
     ((ylo)+((X)-(xlo))*((yhi)-(ylo))/((xhi)-(xlo)))
+
+
 
 
 typedef float2 Complex;
@@ -147,10 +152,9 @@ __global__ void Do_sum_value_gpu(float *indata, float value,int N)
 void select_cuda_dev(int cuda_inds)
 {
 	cudaSetDevice(cuda_inds);
-    // cudaDeviceProp deviceProp;
-    // cudaGetDeviceProperties(&deviceProp, cuda_inds);
-    // printf("\nGPU Device %d: \"%s\" with Capability: %d.%d\n", cuda_inds, deviceProp.name, deviceProp.major, deviceProp.minor);
+    // CUDA_CHECK(cudaGetLastError());
 	cudaDeviceReset();
+    // CUDA_CHECK(cudaGetLastError());
 }
 
 
@@ -347,7 +351,7 @@ float gpu_varience_reduce_float(float *arr, float mean, int total_num)
     
     // reduce6<<<grid_dim, block_dim, block_dim.x*sizeof(int)>>>(d_arr, d_out_arr, total_num, block_dim.x);
     block_varience_reduce_float<<<grid_dim, block_dim, block_dim.x*sizeof(double)>>>(arr, d_out_arr, mean, total_num, block_dim.x);
-    cudaDeviceSynchronize();
+    // cudaDeviceSynchronize();
 
     h_out_arr = new double[block_num];
     // memset(h_out_arr, 0, sizeof(double)*block_num);
@@ -431,7 +435,7 @@ void mask_data_GPU(float *currentdata_gpu, int *maskchans_gpu, float *padvals_gp
     int BlkPerRow=(spectra_per_subint*nummasked-1+512)/512;
     // dim3 dimGrid2D(BlkPerRow,numsubbands);
     Do_mask_data_GPU<<<BlkPerRow, 512>>>(currentdata_gpu, maskchans_gpu, padvals_gpu, spectra_per_subint, num_channels, nummasked);
-    int cudaStatus = cudaDeviceSynchronize();
+    // int cudaStatus = cudaDeviceSynchronize();
 }
 
 __global__ void Do_mask_data_GPU(float *currentdata_gpu, int *maskchans_gpu, float *padvals_gpu, int spectra_per_subint, int num_channels, int nummasked)
@@ -452,7 +456,7 @@ void ignorechans_GPU(float *currentdata_gpu, int *ignorechans_gpu, int spectra_p
 {
     int BlkPerRow=(spectra_per_subint*num_ignorechans-1+512)/512;
     DO_ignorechans_GPU<<<BlkPerRow, 512>>>(currentdata_gpu, ignorechans_gpu, spectra_per_subint, num_channels, num_ignorechans);
-    int cudaStatus = cudaDeviceSynchronize();
+    // int cudaStatus = cudaDeviceSynchronize();
 }
 
 __global__ void DO_ignorechans_GPU(float *currentdata_gpu, int *ignorechans_gpu, int spectra_per_subint, int num_channels, int num_ignorechans)
@@ -599,7 +603,7 @@ void downsamp_GPU(float *indata, float *outdata, int numchan, int numpts, int do
     int BlkPerRow=(numpts-1+512)/512;
     dim3 dimGrid2D(BlkPerRow,numchan);
     Do_downsamp_GPU<<<dimGrid2D, 512>>>(indata, outdata, numchan, numpts, down, transpose);
-    int cudaStatus = cudaDeviceSynchronize();
+    // int cudaStatus = cudaDeviceSynchronize();
 }
 
 __global__ void Do_downsamp_GPU(float *indata, float *outdata, int numchan, int numpts, int down, int transpose)
@@ -648,7 +652,7 @@ void float_dedisp_GPU(float *data, float *lastdata,
     dim3 dimGrid2D(BlkPerRow,numdms);
     Do_float_dedisp_GPU<<< dimGrid2D,512 >>>(data, lastdata, numpts, numchan,
                   delays, approx_mean, result, numdms, transpose);
-    int cudaStatus = cudaDeviceSynchronize();
+    // int cudaStatus = cudaDeviceSynchronize();
 }
 
 
@@ -718,7 +722,7 @@ void Get_subsdata(float *indata, short *outdata, int nsub, int worklen)
 {
     int BlkPerRow=(nsub*worklen-1+512)/512;
     Do_Get_subsdata<<< BlkPerRow,512 >>>(indata, outdata, nsub, worklen);
-    int cudaStatus = cudaDeviceSynchronize();
+    // int cudaStatus = cudaDeviceSynchronize();
 }
 
 __global__ void Do_Get_subsdata(float *indata, short *outdata, int nsub, int worklen)
@@ -738,7 +742,7 @@ void SetSubData4Mask_GPU(float *subbanddata, float *padvals, int *maskchans,int 
     int BlkPerRow=(len-1+512)/512;
     dim3 dimGrid2D(BlkPerRow,Width);
     Do_SetSubData4Mask_GPU<<< dimGrid2D,512 >>>(subbanddata, padvals, maskchans, len, Width);
-    int cudaStatus = cudaDeviceSynchronize();
+    // int cudaStatus = cudaDeviceSynchronize();
 }
 
 __global__ void Do_SetSubData4Mask_GPU(float *subbanddata, float *padvals, int *maskchans, int len, int Width)
@@ -766,7 +770,7 @@ void ZeroDM_subchan_GPU(float *indata, int len, int Width)
         ave/=Width;
         BlkPerRow=(Width-1+512)/512;
         Add_data_GPU<<<BlkPerRow,512>>>(indata, -ave, Width);
-        cudaStatus = cudaDeviceSynchronize();
+        // cudaStatus = cudaDeviceSynchronize();
     }
 
 }
@@ -784,7 +788,7 @@ void transpose_GPU(float *d_src, float *d_dest, int width, int height)
 {
   int BlkPerRow = (width*height-1+512)/512;
   d_transpose<<<BlkPerRow, 512>>>(d_dest, d_src, width, height);
-  int cudaStatus =  cudaDeviceSynchronize();
+//   int cudaStatus =  cudaDeviceSynchronize();
 }
 
 __global__ void d_transpose(float *odata, float *idata, int width, int height) 
@@ -816,7 +820,7 @@ void transpose_GPU_short(short *d_src, float *d_dest, int width, int height)
 //   dim3 threads(BLOCK_DIM, BLOCK_DIM, 1);
 //   d_transpose<<<grid, threads>>>(d_dest, d_src, width, height);
 
-  int cudaStatus =  cudaDeviceSynchronize();
+//   int cudaStatus =  cudaDeviceSynchronize();
 }
 
 __global__ void d_transpose_short(float *odata, short *idata, int width, int height) 
@@ -864,44 +868,66 @@ float  get_med_gpu(float *data, int N)
 }
 
 
-void spread_no_pad_gpu(cufftComplex * data, int numdata,
-                   cufftComplex * result, int numresult, int numbetween, double norm)
+void spread_no_pad_gpu(cufftComplex * data, int numdata, cufftComplex * result, int numresult, int numbetween, double norm)
 {
     int BlkPerRow = (numresult-1+512)/512;
     Do_spread_with_pad_GPU<<<BlkPerRow, 512>>>(data, numdata, result, numresult, numbetween, 0,norm);
+    // CUDA_CHECK(cudaGetLastError());
 }
 
-__global__ void Do_spread_with_pad_GPU(cufftComplex * data, int numdata,
-                     cufftComplex * result, int numresult, int numbetween, int numpad, double norm)
+__global__ void Do_spread_with_pad_GPU(cufftComplex * data, int numdata, cufftComplex * result, int numresult, int numbetween, int numpad, double norm)
 {
     const int  MYgtid = blockDim.x * blockIdx.x + threadIdx.x;
     if(MYgtid>=numresult) return;
 
-    // int numtoplace;
-
     cufftComplex zeros = { 0.0f, 0.0f};
     result[MYgtid] = zeros;
-
+    
     if(MYgtid >= numresult/2) return;
     cufftComplex data_bk = data[MYgtid];
     data_bk.x *= norm;
     data_bk.y *= norm;
-
+    
     result[MYgtid*numbetween] = data_bk;
 }
 
+void spread_no_pad_gpu_list(cufftComplex * data, int numdata, cufftComplex * result, int numresult, int numbetween, int readdatanum, double *norm_data_gpu)
+{
+    int BlkPerRow = (numresult*readdatanum-1+512)/512;
+    Do_spread_with_pad_GPU_list<<<BlkPerRow, 512>>>(data, numdata, result, numresult, numbetween, 0, readdatanum, norm_data_gpu);
+    // CUDA_CHECK(cudaGetLastError());
+}
+
+__global__ void Do_spread_with_pad_GPU_list(cufftComplex * data, int numdata, cufftComplex * result, int numresult, int numbetween, int numpad, int readdatanum, double *norm_data_gpu)
+{
+    const int  MYgtid = blockDim.x * blockIdx.x + threadIdx.x;
+    if(MYgtid>=numresult*readdatanum) return;
+
+    cufftComplex zeros = { 0.0f, 0.0f};
+    result[MYgtid] = zeros;
+
+    if(MYgtid>=numresult*readdatanum/2) return;
+
+    int id_x = MYgtid%numdata;
+    int id_y = MYgtid/numdata;
+
+    cufftComplex data_bk = data[MYgtid];
+    double norm_bk = norm_data_gpu[id_y];
+    
+    data_bk.x *= norm_bk;
+    data_bk.y *= norm_bk;
+    
+    result[MYgtid*2] = data_bk;
+}
+
+                     
 
 
 void loops_in_GPU_1(cufftComplex *fpdata, cufftComplex *fkern, cufftComplex *outdata, int fftlen, int numzs)
 {
-    // cudaBindTexture(NULL, tex_d_fpdata, fpdata, sizeof(cufftComplex) * fftlen);
-    // cudaBindTexture(NULL, tex_d_kernel, fkern, sizeof(cufftComplex) * fftlen*numzs);
-
     int BlkPerRow = (fftlen*numzs-1+512)/512;
-    Do_loops_in_GPU_1<<<BlkPerRow,512>>>(fpdata, fkern, outdata, fftlen, numzs);
-
-    // cudaUnbindTexture(tex_d_fpdata);
-    // cudaUnbindTexture(tex_d_kernel);
+    Do_loops_in_GPU_1<<<BlkPerRow, 512>>>(fpdata, fkern, outdata, fftlen, numzs);
+    // CUDA_CHECK(cudaGetLastError());
 }
 
 __global__ void Do_loops_in_GPU_1(cufftComplex *fpdata, cufftComplex *fkern, cufftComplex *outdata, int fftlen, int numzs)
@@ -910,12 +936,6 @@ __global__ void Do_loops_in_GPU_1(cufftComplex *fpdata, cufftComplex *fkern, cuf
     if(MYgtid>=fftlen*numzs) return;
     const int xnum = MYgtid%fftlen;
 
-    // Complex dfp, dfk;
-    // dfp = tex1Dfetch(tex_d_fpdata, xnum);
-    // dfk = tex1Dfetch(tex_d_kernel, MYgtid);
-    // outdata[MYgtid].x = dfp.x * dfk.x + dfp.y * dfk.y;
-    // outdata[MYgtid].y = dfp.y * dfk.x - dfp.x * dfk.y;
-
     const float dr = fpdata[xnum].x, di = fpdata[xnum].y;
     const float kr = fkern[MYgtid].x, ki = fkern[MYgtid].y;
     cufftComplex outdata_bk;
@@ -923,43 +943,39 @@ __global__ void Do_loops_in_GPU_1(cufftComplex *fpdata, cufftComplex *fkern, cuf
     outdata_bk.y = di * kr - dr * ki;
 
     outdata[MYgtid] = outdata_bk;
+}
 
-    // outdata[MYgtid].x = dr * kr + di * ki;
-    // outdata[MYgtid].y = di * kr - dr * ki;
+void loops_in_GPU_1_list(cufftComplex *fpdata, cufftComplex *fkern, cufftComplex *outdata, int fftlen, int numzs, int readdatanum)
+{
+    int BlkPerRow = (fftlen*numzs*readdatanum-1+512)/512;
+    Do_loops_in_GPU_1_list<<<BlkPerRow, 512>>>(fpdata, fkern, outdata, fftlen, numzs,readdatanum);
+    // CUDA_CHECK(cudaGetLastError());
+}
 
+static __global__ void Do_loops_in_GPU_1_list(cufftComplex *fpdata, cufftComplex *fkern, cufftComplex *outdata, int fftlen, int numzs, int readdatanum)
+{
+    const int  MYgtid = blockDim.x * blockIdx.x + threadIdx.x;
+    if(MYgtid>=fftlen*numzs*readdatanum) return;
 
-    // __shared__ cufftComplex shared_fdata[1024];
-    // __shared__ cufftComplex shared_fkern[1024];
+    const int dataid = MYgtid/(fftlen*numzs);
+    const int zid = (MYgtid - dataid*fftlen*numzs)/fftlen;
+    const int xnum = MYgtid%fftlen;
+    
 
-    // const int MYgtid = blockDim.x * blockIdx.x + threadIdx.x;
-    // if (MYgtid >= fftlen * numzs) return;
+    const float dr = fpdata[xnum+dataid*fftlen].x, di = fpdata[xnum+dataid*fftlen].y;
+    const float kr = fkern[xnum+zid*fftlen].x, ki = fkern[xnum+zid*fftlen].y;
+    cufftComplex outdata_bk;
+    outdata_bk.x = dr * kr + di * ki;
+    outdata_bk.y = di * kr - dr * ki;
 
-    // const int tid = threadIdx.x;
-    // const int xnum = MYgtid % fftlen;
-
-    // // 读取fpdata到共享内存
-    // // if (tid < fftlen)
-    // {
-    //     shared_fdata[tid] = fpdata[xnum];
-    //     shared_fkern[tid] = fkern[MYgtid];
-    // }
-    // __syncthreads();
-
-    // // 复数乘法进行匹配滤波
-    // const float dr = shared_fdata[tid].x, di = shared_fdata[tid].y;
-    // const float kr = shared_fkern[tid].x, ki = shared_fkern[tid].y;
-    // outdata[MYgtid].x = dr * kr + di * ki;
-    // outdata[MYgtid].y = di * kr - dr * ki;
+    outdata[MYgtid] = outdata_bk;
 }
 
 void loops_in_GPU_2(cufftComplex *fdata,  float *outpows, int numrs, int numzs, int offset, int fftlen, float norm, float *outpows_obs, long long rlen, long long rlo, int tip)
 {
-    // cudaBindTexture(NULL, tex_d_fdata, fdata, sizeof(cufftComplex) * fftlen*numzs);
-    
     int BlkPerRow = (numrs*numzs-1+512)/512;
     Do_loops_in_GPU_2<<<BlkPerRow, 512>>>(fdata, outpows, numrs, numzs, offset, fftlen, norm, outpows_obs, rlen, rlo, tip);
-
-    // cudaUnbindTexture(tex_d_fdata);
+    // CUDA_CHECK(cudaGetLastError());
 }
 
 static __global__ void Do_loops_in_GPU_2(cufftComplex *fdata,  float *outpows, int numrs, int numzs, int offset, int fftlen, float norm, float *outpows_obs, long long rlen, long long rlo, int tip)
@@ -971,39 +987,43 @@ static __global__ void Do_loops_in_GPU_2(cufftComplex *fdata,  float *outpows, i
     const int xnum = MYgtid - ynum*numrs;
     const int ind = xnum+offset + ynum*fftlen;
 
-
-
     Complex fdata_b = fdata[ind];
     if(tip)
         outpows[MYgtid] = outpows_obs[ynum*rlen+xnum+rlo] = (fdata_b.x*fdata_b.x +  fdata_b.y*fdata_b.y) * norm;
     else
         outpows[MYgtid] = (fdata_b.x*fdata_b.x + fdata_b.y*fdata_b.y) * norm;
+}
 
+void loops_in_GPU_2_list(cufftComplex *fdata,  float *outpows, int numrs, int numzs, int offset, int fftlen, float norm, float *outpows_obs, long long rlen, long long rlo, int tip, int readdatanum, int outpows_gpu_xlen, int outpows_gpu_obs_xlen)
+{
+    int BlkPerRow = (numrs*numzs*readdatanum-1+512)/512;
+    Do_loops_in_GPU_2_list<<<BlkPerRow, 512>>>(fdata, outpows, numrs, numzs, offset, fftlen, norm, outpows_obs, rlen, rlo, tip, readdatanum, outpows_gpu_xlen, outpows_gpu_obs_xlen);
+    // CUDA_CHECK(cudaGetLastError());
+}
 
-    // __shared__ cufftComplex shared_fdata[1024];
-    // int tid = threadIdx.x;
-    // shared_fdata[tid] = fdata[ind];
-    // __syncthreads();
-    // Complex fdata_b = shared_fdata[tid];
-    // if(tip)
-    //     outpows[MYgtid] = outpows_obs[ynum*rlen+xnum+rlo] = (fdata_b.x*fdata_b.x +  fdata_b.y*fdata_b.y) * norm;
-    // else
-    //     outpows[MYgtid] = (fdata_b.x*fdata_b.x + fdata_b.y*fdata_b.y) * norm;
+static __global__ void Do_loops_in_GPU_2_list(cufftComplex *fdata,  float *outpows, int numrs, int numzs, int offset, int fftlen, float norm, float *outpows_obs, long long rlen, long long rlo, int tip, int readdatanum, int outpows_gpu_xlen, int outpows_gpu_obs_xlen)
+{
+    const int  MYgtid = blockDim.x * blockIdx.x + threadIdx.x;
+    if(MYgtid>=numrs*numzs*readdatanum) return;
+    
+    const int dataid = MYgtid/(numrs*numzs);
+    const int ynum = (MYgtid-dataid*numrs*numzs)/numrs;
+    const int xnum = MYgtid%numrs;
+    
+    const int ind = dataid*fftlen*numzs + ynum*fftlen + xnum + offset;
+
+    Complex fdata_b = fdata[ind];
+    if(tip)
+        outpows[dataid*outpows_gpu_xlen + ynum*numrs + xnum] = outpows_obs[dataid*outpows_gpu_obs_xlen+ ynum*rlen+xnum+rlo] = (fdata_b.x*fdata_b.x +  fdata_b.y*fdata_b.y) * norm;
+    else
+        outpows[dataid*outpows_gpu_xlen + ynum*numrs + xnum] = (fdata_b.x*fdata_b.x + fdata_b.y*fdata_b.y) * norm;
 }
 
 void add_subharm_gpu(float *powers_out, cufftComplex *fdata, unsigned short *rinds, unsigned short *zinds, int numrs_0, int numzs_0, int fftlen, int numzs, int offset, float norm)
 {
-    // cudaBindTexture(NULL, tex_d_fdata, fdata, sizeof(cufftComplex) * fftlen*numzs);
-    // cudaBindTexture(NULL, tex_d_zinds, zinds, sizeof(unsigned short) * numzs_0 );
-    // cudaBindTexture(NULL, tex_d_rinds, rinds, sizeof(unsigned short) * numrs_0 );		
-
-
     int BlkPerRow = (numrs_0*numzs_0-1+512)/512;
     Do_add_subharm_gpu<<< BlkPerRow, 512 >>>(powers_out, fdata, rinds, zinds, numrs_0, numzs_0, fftlen, offset, norm);
-
-    // cudaUnbindTexture(tex_d_fdata);
-    // cudaUnbindTexture(tex_d_zinds);
-    // cudaUnbindTexture(tex_d_rinds);
+    // CUDA_CHECK(cudaGetLastError());
 }
 
 static __global__ void Do_add_subharm_gpu(float *powers_out, cufftComplex *fdata,unsigned short *rinds, unsigned short *zinds, int numrs_0, int numzs_0, int fftlen, int offset, float norm)
@@ -1015,12 +1035,35 @@ static __global__ void Do_add_subharm_gpu(float *powers_out, cufftComplex *fdata
     int addr_z = zinds[yy];
     int xx = MYgtid -  yy * numrs_0 ;
     int addr_r = rinds[xx];
-    int addr_result = addr_z * fftlen + offset + addr_r ;
+    int addr_result = addr_z * fftlen + addr_r + offset;
 
     Complex fdata_b = fdata[addr_result];
     powers_out[MYgtid] += ((fdata_b.x*fdata_b.x +  fdata_b.y*fdata_b.y)*norm);
 }
 
+void add_subharm_gpu_list(float *powers_out, cufftComplex *fdata, unsigned short *rinds, unsigned short *zinds, int numrs_0, int numzs_0, int fftlen, int numzs, int offset, float norm, int readdatanum, int outpows_gpu_xlen)
+{
+    int BlkPerRow = (numrs_0*numzs_0*readdatanum-1+512)/512;
+    Do_add_subharm_gpu_list<<< BlkPerRow, 512 >>>(powers_out, fdata, rinds, zinds, numrs_0, numzs_0, fftlen, numzs, offset, norm, readdatanum, outpows_gpu_xlen);
+    // CUDA_CHECK(cudaGetLastError());
+}
+
+static __global__ void Do_add_subharm_gpu_list(float *powers_out, cufftComplex *fdata,unsigned short *rinds, unsigned short *zinds, int numrs_0, int numzs_0, int fftlen, int numzs, int offset, float norm, int readdatanum, int outpows_gpu_xlen)
+{
+    const int  MYgtid = blockDim.x * blockIdx.x + threadIdx.x;
+    if(MYgtid>=numrs_0*numzs_0*readdatanum) return;
+
+    int dataid = MYgtid/(numrs_0*numzs_0);
+    int yy = (MYgtid-dataid*numrs_0*numzs_0)/numrs_0;
+    int addr_z = zinds[yy];
+    int xx = MYgtid%numrs_0;
+    int addr_r = rinds[xx];
+    int addr_result = dataid*fftlen*numzs +  addr_z * fftlen + addr_r + offset;
+
+    Complex fdata_b = fdata[addr_result];
+    // powers_out[MYgtid] += ((fdata_b.x*fdata_b.x +  fdata_b.y*fdata_b.y)*norm);
+    powers_out[dataid*outpows_gpu_xlen + yy*numrs_0 + xx] += ((fdata_b.x*fdata_b.x +  fdata_b.y*fdata_b.y)*norm);
+}
 
 static __device__ __host__ inline int calc_required_z_gpu(double harm_fract, double zfull)
 {
@@ -1061,6 +1104,37 @@ static  __global__ void Do_inmem_add_ffdotpows_gpu_gpu(float *fdp, float *powptr
     powptr[MYgtid] += tmp;
 }
 
+void inmem_add_ffdotpows_gpu_gpu_list(float *fdp, float *powptr, int *rinds, int zlo, int numrs, int numzs, int stage, long long rlen, int outpows_gpu_xlen, int readdatanum, int outpows_gpu_obs_xlen)
+{
+    int BlkPerRow = (numrs*numzs*readdatanum-1+512)/512;
+    Do_inmem_add_ffdotpows_gpu_gpu_list<<< BlkPerRow, 512>>>(fdp, powptr, rinds, zlo, numrs, numzs, (int)(pow(2,stage-1)), rlen, outpows_gpu_xlen, readdatanum, outpows_gpu_obs_xlen);
+}
+
+static  __global__ void Do_inmem_add_ffdotpows_gpu_gpu_list(float *fdp, float *powptr, int *rinds,int zlo, int numrs, int numzs, int stage, long long rlen, int outpows_gpu_xlen, int readdatanum, int outpows_gpu_obs_xlen)
+{
+    const int  MYgtid = blockDim.x * blockIdx.x + threadIdx.x;
+    if(MYgtid>=numrs*numzs*readdatanum) return;
+
+    const int dataid = MYgtid/(numrs*numzs);
+    const int ii = (MYgtid - dataid*numrs*numzs)/numrs;
+    const int jj = MYgtid%numrs;
+
+    int zz = zlo + ii * 2;
+    int zind, subz;
+    int kk;
+    float tmp = 0.0f;
+    
+    for(kk=0; kk<stage; kk++)
+    {
+        subz = calc_required_z_gpu((2.0*kk+1.0)/(stage*2), zz);
+        zind = index_from_z_gpu(subz, zlo);
+        int offset = zind * rlen;
+        tmp += fdp[offset+rinds[jj+ (kk+stage-1)*numrs] + dataid*outpows_gpu_obs_xlen];
+    }
+    // powptr[MYgtid] += tmp;
+    powptr[dataid*outpows_gpu_xlen + ii*numrs + jj] += tmp;
+}
+
 
 int  search_ffdotpows_gpu(float powcut, float *d_fundamental, accel_cand_gpu * cand_array_search_gpu, int numzs, int numrs, accel_cand_gpu *cand_gpu_cpu)
 {
@@ -1073,26 +1147,22 @@ int  search_ffdotpows_gpu(float powcut, float *d_fundamental, accel_cand_gpu * c
         cudaMalloc((void **)&d_addr, sizeof(int) * 1);
         firsttime = 0;
     }
-	
 	cudaMemset(d_addr, 0, sizeof(int)); // set d_addr to 0
 
 	int BlkPerRow=(numrs*numzs-1+512)/512;
 	search_ffdotpows_kernel<<<BlkPerRow, 512>>>(powcut, d_fundamental, cand_array_search_gpu, numzs, numrs, d_addr);
+    // CUDA_CHECK(cudaGetLastError());
 	cudaMemcpy(&h_addr, d_addr, sizeof(int) * 1, cudaMemcpyDeviceToHost);	
 	cudaMemcpy(cand_gpu_cpu, cand_array_search_gpu, sizeof(accel_cand_gpu) * h_addr, cudaMemcpyDeviceToHost);
-	
-    // cudaFree(d_addr);
-
+    
 	return h_addr ;
 }
 
 static __global__ void  search_ffdotpows_kernel(float powcut, float *d_fundamental, accel_cand_gpu * cand_array_search_gpu, int numzs, int numrs, int *d_addr)
 {
     const int MYgtid = blockIdx.x * blockDim.x + threadIdx.x;
-    // const int total_num = numrs*numzs;
     if(MYgtid >= numrs*numzs) return;
     
-
     float pow = d_fundamental[MYgtid];
     if(pow > powcut)
     {
@@ -1112,97 +1182,61 @@ static __global__ void  search_ffdotpows_kernel(float powcut, float *d_fundament
     }
 }
 
+void  search_ffdotpows_gpu_list(float powcut, float *d_fundamental, accel_cand_gpu * cand_array_search_gpu, int numzs, int numrs, accel_cand_gpu *cand_gpu_cpu, int readdatanum, int *nof_cand, int output_x_max, int d_fundamental_xlen)
+{
+    static int  *d_addr;
+    static int firsttime = 1;
+	
+    if(firsttime)
+    {
+        cudaMalloc((void **)&d_addr, sizeof(int) * readdatanum);
+        firsttime = 0;
+    }
 
-
-// int search_ffdotpows_gpu(float powcut, float *d_fundamental, accel_cand_gpu *cand_array_search_gpu, accel_cand_gpu *cand_array_sort_gpu, int numzs, int numrs, accel_cand_gpu *cand_gpu_cpu)
-// {
-//     static int *d_addr = NULL;
-//     static int firsttime = 1;
-//     int *h_addr;
-//     int total_cand = 0;
+	cudaMemset(d_addr, 0, sizeof(int)*readdatanum); // set d_addr to 0
     
-//     if (firsttime) {
-//         if (cudaMalloc((void **)&d_addr, sizeof(int) * 1024) != cudaSuccess) {
-//             fprintf(stderr, "CUDA error: Failed to allocate d_addr\n");
-//             return -1;
-//         }
-
-//         if (cudaMallocHost((void**)&h_addr, sizeof(int) * 1024) != cudaSuccess) {
-//             fprintf(stderr, "CUDA error: Failed to allocate h_addr\n");
-//             return -1;
-//         }
-        
-//         firsttime = 0;
-//     }
+	int BlkPerRow=(numrs*numzs*readdatanum-1+512)/512;
+	search_ffdotpows_kernel_list<<<BlkPerRow, 512>>>(powcut, d_fundamental, cand_array_search_gpu, numzs, numrs, d_addr, readdatanum, output_x_max, d_fundamental_xlen);
     
-//     if (cudaMemset(d_addr, 0, sizeof(int) * 1024) != cudaSuccess) {
-//         fprintf(stderr, "CUDA error: Failed to set d_addr\n");
-//         return -1;
-//     }
+	cudaMemcpy(nof_cand, d_addr, sizeof(int) * readdatanum, cudaMemcpyDeviceToHost);	
     
-//     int BlkPerRow = (numrs * numzs + 511) / 512;
-//     search_ffdotpows_kernel<<<BlkPerRow, 512>>>(powcut, d_fundamental, cand_array_search_gpu, numzs, numrs, d_addr);
+    int ii;
+    for(ii=0; ii<readdatanum; ii++)
+    {
+        cudaMemcpy(cand_gpu_cpu+ii*output_x_max, cand_array_search_gpu+ii*output_x_max, sizeof(accel_cand_gpu)* nof_cand[ii], cudaMemcpyDeviceToHost);
+    }
+}
+
+
+static __global__ void  search_ffdotpows_kernel_list(float powcut, float *d_fundamental, accel_cand_gpu * cand_array_search_gpu, int numzs, int numrs, int *d_addr, int readdatanum, int put_x_max, int d_fundamental_xlen)
+{
+    const int MYgtid = blockIdx.x * blockDim.x + threadIdx.x;
+    if(MYgtid >= numrs*numzs*readdatanum) return;
     
-//     cudaError_t err = cudaGetLastError();
-//     if (err != cudaSuccess) {
-//         fprintf(stderr, "CUDA error after kernel launch: %s\n", cudaGetErrorString(err));
-//         return -1;
-//     }
+    int d_f_id = MYgtid / (numrs*numzs);
+    int yy = (MYgtid-d_f_id*numrs*numzs)/numrs;
+    int xx = MYgtid%numrs;
 
-//     if (cudaDeviceSynchronize() != cudaSuccess) {
-//         fprintf(stderr, "CUDA error: Failed to synchronize\n");
-//         return -1;
-//     }
+    float pow = d_fundamental[d_f_id*d_fundamental_xlen + yy*numrs + xx];
 
-//     if (cudaMemcpy(h_addr, d_addr, sizeof(int) * 1024, cudaMemcpyDeviceToHost) != cudaSuccess) {
-//         fprintf(stderr, "CUDA error: Failed to copy d_addr to host\n");
-//         return -1;
-//     }
     
-//     for (int i = 0; i < 1024; i++) {
-//         total_cand += h_addr[i];
-//     }
-    
-//     if (cudaMemcpy(cand_gpu_cpu, cand_array_search_gpu, sizeof(accel_cand_gpu) * total_cand, cudaMemcpyDeviceToHost) != cudaSuccess) {
-//         fprintf(stderr, "CUDA error: Failed to copy cand_array_search_gpu to host\n");
-//         return -1;
-//     }
-    
-//     return total_cand;
-// }
+    if(pow > powcut)
+    {
+        int addr_search;
 
-// __global__ void search_ffdotpows_kernel(float powcut, float *d_fundamental, accel_cand_gpu *cand_array_search_gpu, int numzs, int numrs, int *d_addr)
-// {
-//     const int MYgtid = blockIdx.x * blockDim.x + threadIdx.x;
-//     const int total_num = numrs * numzs;
-//     if (MYgtid >= total_num) return;
-    
-//     float pow = d_fundamental[MYgtid];
-//     if (pow > powcut)
-//     {
-//         accel_cand_gpu cand_tmp;
-//         cand_tmp.pow = pow;
-//         cand_tmp.nof_cand = 1;
-//         cand_tmp.z_ind = MYgtid / numrs;
-//         cand_tmp.r_ind = MYgtid % numrs;
-//         cand_tmp.w_ind = 0;
+        addr_search = atomicAdd(&d_addr[d_f_id], 1);
 
-//         int warp_id = threadIdx.x / 32;
-//         int lane_id = threadIdx.x % 32;
-//         __shared__ int warp_counter[32];
+        accel_cand_gpu cand_tmp ;
+        cand_tmp.pow = pow ;
+        cand_tmp.nof_cand = 1;
+        cand_tmp.z_ind = yy;
+        cand_tmp.r_ind = xx;
+        cand_tmp.w_ind = 0;
+        cand_array_search_gpu[ addr_search + d_f_id*put_x_max] = cand_tmp ;
+    }
+}
 
-//         if (lane_id == 0) {
-//             warp_counter[warp_id] = atomicAdd(&d_addr[blockIdx.x * 32 + warp_id], 1);
-//         }
-//         __syncthreads();
 
-//         int addr_search = warp_counter[warp_id] + lane_id;
-//         int index = blockIdx.x * 32 * blockDim.x + addr_search;
-//         if (index < total_num) { // 边界检查
-//             cand_array_search_gpu[index] = cand_tmp;
-//         } 
-//     }
-// }
 
 
 
@@ -2082,4 +2116,45 @@ __global__ void get_redchi_gpu_Do(double *currentstats_redchi, double *outprof, 
 
 
 
+void Set_cufftComplex_date_as_zero_gpu(fcomplex *data, long long num)
+{
+
+    Set_cufftComplex_date_as_zero_gpu_Do<<<(num+255)/256, 256>>>(data, num);
+}
+
+__global__ void Set_cufftComplex_date_as_zero_gpu_Do(fcomplex *data, long long num)
+{
+    long long idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if(idx>=num) return;
+
+    data[idx].r = 0.0f;
+    data[idx].i = 0.0f;
+}
+
+void compute_power_gpu(fcomplex *data, float *powers, int numdata) 
+{
+    compute_power_kernel<<<(numdata+255)/256, 256>>>(data, powers, numdata);
+}
+
+
+__global__ void compute_power_kernel(fcomplex *data, float *powers, int numdata) 
+{
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if(idx>=numdata) return;
+
+    float  real = data[idx].r;
+    float  imag = data[idx].i;
+    powers[idx] = real * real + imag * imag;
+}
+
+
+void sort_and_get_median_gpu(float *data, int numdata, float *median) 
+{
+    thrust::device_ptr<float> dev_ptr(data);
+    thrust::sort(dev_ptr, dev_ptr + numdata);
+
+
+    int middle = (numdata-1) / 2;
+    cudaMemcpy(median, data + middle, sizeof(float), cudaMemcpyDeviceToHost);
+}
 

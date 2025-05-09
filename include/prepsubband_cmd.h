@@ -110,6 +110,8 @@ typedef struct s_Cmdline_preps {
   int ignorechanstrC;
   /***** -cache: Read/Write data from cache */
   char cacheP;
+  /***** -outlist: Write a list of the .dat files */
+  char outlistP;
   /***** uninterpreted command line parameters */
   int argc;
   /*@null*/char **argv;

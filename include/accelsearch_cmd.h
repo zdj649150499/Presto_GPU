@@ -17,6 +17,10 @@ typedef struct s_Cmdline_accel {
   char cudaP;
   int cuda;
   int cudaC;
+  /***** -gput: set t number for t*data calculate in GPU device at onece */
+  char gpuP;
+  int gpu;
+  int gpuC;
   /***** -lobin: The first Fourier frequency in the data file */
   char lobinP;
   int lobin;
@@ -75,8 +79,12 @@ typedef struct s_Cmdline_accel {
   char noharmpolishP;
   /***** -noharmremove: Do not remove harmonically related candidates (never removed for numharm = 1) */
   char noharmremoveP;
+  /* -list: input a .dat/.fft list file*/
+  char listP;
+  int listnum; 
+  char** datalist;
   /***** uninterpreted command line parameters */
-  int argc;
+  int argc;        
   /*@null*/char **argv;
   /***** the whole command line concatenated */
   char *full_cmd_line;

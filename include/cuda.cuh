@@ -10,6 +10,26 @@
 extern "C" {
 #endif
 
+
+#define CUDA_CHECK(call)                            \
+do                                                  \
+{                                                   \
+    const cudaError_t error_code = call;            \
+    if (error_code != cudaSuccess)                  \
+    {                                               \
+        printf("CUDA Error:\n");                    \
+        printf("    File:       %s\n", __FILE__);   \
+        printf("    Line:       %d\n", __LINE__);   \
+        printf("    Error code: %d\n", error_code); \
+        printf("    Error text: %s\n",              \
+                cudaGetErrorString(error_code));    \
+        exit(1);                                    \
+    }                                               \
+} while (0)
+
+
+
+
 #ifndef _FCOMPLEX_DECLARED_
 typedef struct fcomplex {
     float r, i;
@@ -169,29 +189,39 @@ __global__ void Do_get_power_GPU(cufftComplex * data, int numdata, float *power)
 float  get_med_gpu(float *data, int N);
 
 
-void spread_no_pad_gpu(cufftComplex * data, int numdata,
-                   cufftComplex * result, int numresult, int numbetween, double norm);
-__global__ void Do_spread_with_pad_GPU(cufftComplex * data, int numdata,
-                     cufftComplex * result, int numresult, int numbetween, int numpad, double norm);
+void spread_no_pad_gpu(cufftComplex * data, int numdata, cufftComplex * result, int numresult, int numbetween, double norm);
+__global__ void Do_spread_with_pad_GPU(cufftComplex * data, int numdata, cufftComplex * result, int numresult, int numbetween, int numpad, double norm);
 
-
+void spread_no_pad_gpu_list(cufftComplex * data, int numdata, cufftComplex * result, int numresult, int numbetween, int readdatanum, double *norm_data_gpu);
+__global__ void Do_spread_with_pad_GPU_list(cufftComplex * data, int numdata, cufftComplex * result, int numresult, int numbetween, int numpad, int readdatanum, double *norm_data_gpu);
+                   
 void loops_in_GPU_1(cufftComplex *fpdata, cufftComplex *fkern, cufftComplex *outdata, int fftlen, int numzs);
+void loops_in_GPU_1_list(cufftComplex *fpdata, cufftComplex *fkern, cufftComplex *outdata, int fftlen, int numzs, int readdatanum);
 static __global__ void Do_loops_in_GPU_1(cufftComplex *fpdata, cufftComplex *fkern, cufftComplex *outdata, int fftlen, int numzs);
-
+static __global__ void Do_loops_in_GPU_1_list(cufftComplex *fpdata, cufftComplex *fkern, cufftComplex *outdata, int fftlen, int numzs, int readdatanum);
 
 
 void loops_in_GPU_2(cufftComplex *fdata,  float *outpows, int numrs, int numzs, int offset, int fftlen, float norm, float *outpows_obs, long long rlen, long long rlo, int tip);
+void loops_in_GPU_2_list(cufftComplex *fdata,  float *outpows, int numrs, int numzs, int offset, int fftlen, float norm, float *outpows_obs, long long rlen, long long rlo, int tip, int readdatanum, int outpows_gpu_xlen, int outpows_gpu_obs_xlen);
 static __global__ void Do_loops_in_GPU_2(cufftComplex *fdata,  float *outpows, int numrs, int numzs, int offset, int fftlen, float norm, float *outpows_obs, long long rlen, long long rlo, int tip);
+static __global__ void Do_loops_in_GPU_2_list(cufftComplex *fdata,  float *outpows, int numrs, int numzs, int offset, int fftlen, float norm, float *outpows_obs, long long rlen, long long rlo, int tip, int readdatanum, int outpows_gpu_xlen, int outpows_gpu_obs_xlen);
 
 void add_subharm_gpu(float *powers_out, cufftComplex *fdata, unsigned short *rinds, unsigned short *zinds, int numrs_0, int numzs_0, int fftlen, int numzs,int offset, float norm);
+void add_subharm_gpu_list(float *powers_out, cufftComplex *fdata, unsigned short *rinds, unsigned short *zinds, int numrs_0, int numzs_0, int fftlen, int numzs,int offset, float norm, int readdatanum, int outpows_gpu_xlen);
 static __global__ void Do_add_subharm_gpu(float *powers_out, cufftComplex *fdata,unsigned short *rinds, unsigned short *zinds, int numrs_0, int numzs_0, int fftlen, int offset, float norm);
+static __global__ void Do_add_subharm_gpu_list(float *powers_out, cufftComplex *fdata,unsigned short *rinds, unsigned short *zinds, int numrs_0, int numzs_0, int fftlen, int numzs, int offset, float norm, int readdatanum, int outpows_gpu_xlen);
 
 
 void inmem_add_ffdotpows_gpu_gpu(float *fdp, float *powptr, int *rinds, int zlo, int numrs, int numzs, int stage, long long rlen);
 static __global__ void Do_inmem_add_ffdotpows_gpu_gpu(float *fdp, float *powptr, int *rinds,int zlo, int numrs, int numzs, int stage, long long rlen);
 
+void inmem_add_ffdotpows_gpu_gpu_list(float *fdp, float *powptr, int *rinds, int zlo, int numrs, int numzs, int stage, long long rlen, int outpows_gpu_xlen, int readdatanum, int outpows_gpu_obs_xlen);
+static  __global__ void Do_inmem_add_ffdotpows_gpu_gpu_list(float *fdp, float *powptr, int *rinds,int zlo, int numrs, int numzs, int stage, long long rlen, int outpows_gpu_xlen, int readdatanum, int outpows_gpu_obs_xlen);
+
 int  search_ffdotpows_gpu(float powcut, float *d_fundamental, accel_cand_gpu * cand_array_search_gpu, int numzs, int numrs, accel_cand_gpu *cand_gpu_cpu);
+void  search_ffdotpows_gpu_list(float powcut, float *d_fundamental, accel_cand_gpu * cand_array_search_gpu, int numzs, int numrs, accel_cand_gpu *cand_gpu_cpu, int readdatanum, int *nof_cand, int output_x_max, int d_fundamental_xlen);
 static __global__ void  search_ffdotpows_kernel(float powcut, float *d_fundamental, accel_cand_gpu * cand_array_search_gpu, int numzs, int numrs, int *d_addr);
+static __global__ void  search_ffdotpows_kernel_list(float powcut, float *d_fundamental, accel_cand_gpu * cand_array_search_gpu, int numzs, int numrs, int *d_addr, int readdatanum, int put_x_max, int d_fundamental_xlen);
 
 void hunt_CPU(double *xx, int n, double x, int *jlo);
 void hunt_GPU(double *xx, int n, double x, int *jlo);
@@ -244,6 +274,15 @@ __device__ double calculate_delays(double pf, double pfdot, double search_fold_p
 void get_redchi_gpu(double *currentstats_redchi, double *outprof,  double outstats_prof_avg, double outstats_prof_var, int proflen, int parts);
 __global__ void get_redchi_gpu_Do(double *currentstats_redchi, double *outprof,  double outstats_prof_avg, double outstats_prof_var, int proflen, int parts);
        
+
+void Set_cufftComplex_date_as_zero_gpu(fcomplex *data, long long num);
+__global__ void Set_cufftComplex_date_as_zero_gpu_Do(fcomplex *data, long long num);
+
+void compute_power_gpu(fcomplex *data, float *powers, int numdata);
+__global__ void compute_power_kernel(fcomplex *data, float *powers, int numdata);
+
+void sort_and_get_median_gpu(float *data, int numdata, float *median);
+
 #ifdef __cplusplus
 }
 #endif

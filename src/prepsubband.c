@@ -819,8 +819,7 @@ int main(int argc, char *argv[])
     }
     //  Close all the raw files and free their vectors
     close_rawfiles(&s);
-    for (ii = 0; ii < cmd->numdms; ii++)
-        fclose(outfiles[ii]);
+    
     
     if (cmd->subP) {
         vect_free(subsdata[0]);
@@ -829,7 +828,24 @@ int main(int argc, char *argv[])
         vect_free(outdata[0]);
         vect_free(outdata);
     }
+
+    if(cmd->outlistP)
+    {
+        char outlistname[1024];
+        sprintf(outlistname, "%s_DM%.*f.dat.list", cmd->outfile, dmprecision, dms[0]);
+        printf("Writing list to: %s \n", outlistname);
+        
+        FILE *outlist = chkfopen(outlistname, "w");
+        for (ii = 0; ii < cmd->numdms; ii++) {
+            sprintf(datafilenm, "%s_DM%.*f.dat", cmd->outfile, dmprecision, dms[ii]);
+            fprintf(outlist, "%s\n", datafilenm);
+        }
+        fclose(outlist);
+    }
     
+    for (ii = 0; ii < cmd->numdms; ii++)
+        fclose(outfiles[ii]);
+        
     free(outfiles);
     vect_free(dms);
     vect_free(idispdt);
@@ -854,6 +870,8 @@ int main(int argc, char *argv[])
             free_prep_subband_GPU_cache_array();
         Endup_GPU();
     }
+
+
 
     printf("\nTiming summary:\n");
     tott = times(&runtimes) / (double) CLK_TCK - tott;

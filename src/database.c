@@ -17,6 +17,7 @@ static char num[41][5] = { "0th", "1st", "2nd", "3rd", "4th", "5th", "6th",
 int read_database(void)
 /* Reads the full pulsar database into the static array psrdata */
 {
+
     FILE *database;
     char databasenm[200];
     psrdata pdata;
@@ -27,11 +28,11 @@ int read_database(void)
     database = chkfopen(databasenm, "rb");
 
     while (chkfread(&pdata, sizeof(psrdata), 1, database)) {
-        if (np >= NP) {
-            printf("NP value set to small (%d) in $PRESTO/include/database.h\n", NP);
-            printf("Please increase it and recompile\n");
-            exit(-1);
-        }
+        // if (np >= NP) {
+        //     printf("NP value set to small (%d) in $PRESTO/include/database.h\n", NP);
+        //     printf("Please increase it and recompile\n");
+        //     exit(-1);
+        // }
         strncpy(pulsardata[np].jname, pdata.jname, 13);
         strncpy(pulsardata[np].bname, pdata.bname, 9);
         strncpy(pulsardata[np].alias, pdata.alias, 10);

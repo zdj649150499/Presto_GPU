@@ -759,6 +759,7 @@ void *read_fcomplex_file_gpu(FILE * file, long firstpt, long numpts, fcomplex *r
 /*       file, the returned vector will be zero padded.           */
 
 float *read_float_file(FILE *file, long firstpt, long numpts);
+float *read_float_file_list(FILE * file, long firstpt, long numpts, float *result);
 /* Return a float vector with complex data taken from a file.     */
 /* Argumants:                                                     */
 /*   'file' is a pointer to the file you want to access.          */
