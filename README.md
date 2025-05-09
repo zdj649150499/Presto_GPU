@@ -4,7 +4,7 @@ This is a GPU version of PRESTO that created by DeJiang Zhou at NAOC (zdj6491504
 
 In this version, `prepsubband` ,`accelsearch`, and `prepfold` can work with the option `-cuda` on a GPU device.
 
-We added a new `prepcache`, which can generate an cache file and  greatly accelerate the speed of `prepsubband` and `prepfold`.
+We added a new `prepcache`, which can generate a cache file and  greatly accelerate the speed of `prepsubband` and `prepfold`.
 
 Using `accelsearchlist1` or `accelsearchlistm` to process`.dat.list` files can save a lot of memory processing time.
 
