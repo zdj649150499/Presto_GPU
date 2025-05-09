@@ -1,6 +1,6 @@
 # PRESTO
 
-Presto_GPU_v2.0
+Presto_GPU_v2.1
 
 Update `rfifind`, `prepsubband`, `accensearch`, `prepfold`.
 
@@ -14,6 +14,8 @@ For searching pulsar with this Presto, you can use the following command:
 $ rfifind -time aaa -o bbb bbb.fits
 ```
 
+
+
 2: `prepcache` (up-to you)
 
 ```shell
@@ -23,6 +25,8 @@ $ prepcache -zerodm -ncpus 16 -o bbb -mask bbb_rfifind.mask bbb.fits
 
 # These two steps will generate two cache files, which can be used later for prepsubband and prepfold, greatly speeding up the processing speed.
 ```
+
+
 
 3: `prepsubband` 
 
@@ -36,14 +40,29 @@ $ prepsubband -zerodm -cache -cuda 0 -nsub 64 -lodm 5 -numdms 100 -dmstep 1 -dow
 $ prepsubband -cuda 0 -nsub 64 -lodm 5 -numdms 100 -dmstep 1 -downsamp 1 -numout 1000000 -mask bbb_rfifind.mask -o bbb bbb.fits
 # or de-zerodm
 $ prepsubband -zerodm -cuda 0 -nsub 64 -lodm 5 -numdms 100 -dmstep 1 -downsamp 1 -numout 1000000 -mask bbb_rfifind.mask -o bbb bbb.fits
-
 ```
+
+for the version of GPU_v2.1, you can get a "`.dat.list`" file for each `prepsubband ` with the option `-outlist`
+
+
 
 4: `accelsearch` 
 
 ```shell
 $ accelsearch -cuda 0 -numharm 32 -zmax 200 cccccc.dat
 ```
+
+For the version of GPU_v2.1, you can use `accelsearchlist1` or `accelsearchlistm` with the "`.dat.list`" files
+
+```shell
+# input with a .dat.list, and use the accelsearchlist1 for searching:
+$ accelsearchlist1 -cuda 0 -numharm 32 -zmax 200  cccccc.dat.list
+
+# or use the accelsearchlistm for multi-.dat file at once: 
+$ accelsearchlistm -ncpus 10 -gput 10 -cuda 0 -numharm 32 -zmax 200  cccccc.dat.list
+```
+
+
 
 5: `prepfold`
 
