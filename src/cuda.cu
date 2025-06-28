@@ -492,9 +492,9 @@ void dedisp_subbands_GPU(float *data_gpu, float *lastdata_gpu,
     // cudaMemcpy(lastdata_gpu, lastdata, sizeof(float)*numpts * numchan, cudaMemcpyHostToDevice);
     
 
-    int BlkPerRow=(numpts-1+512)/512;
-    dim3 dimGrid2D(BlkPerRow,numsubbands);
-    Do_dedisp_subbands_GPU<<<dimGrid2D,512>>>(data_gpu, lastdata_gpu, numpts, numchan, delays, numsubbands, result, transpose);
+    int BlkPerRow=(numpts*numsubbands-1+512)/512;
+    // dim3 dimGrid2D(BlkPerRow,numsubbands);
+    Do_dedisp_subbands_GPU<<<BlkPerRow,512>>>(data_gpu, lastdata_gpu, numpts, numchan, delays, numsubbands, result, transpose);
     // int cudaStatus = cudaDeviceSynchronize();
 
     // cudaFree(data_gpu);
@@ -505,9 +505,9 @@ void dedisp_subbands_GPU_cache(unsigned char *data_gpu, float *data_gpu_scl, flo
                      int numpts, int numchan, 
                      int *delays, int numsubbands, float *result, int transpose)
 {
-    int BlkPerRow=(numpts-1+512)/512;
-    dim3 dimGrid2D(BlkPerRow,numsubbands);
-    Do_dedisp_subbands_GPU_cache<<<dimGrid2D,512>>>(data_gpu, data_gpu_scl, data_gpu_offs, lastdata_gpu, lastdata_gpu_scl, lastdata_gpu_offs,
+    int BlkPerRow=(numpts*numsubbands-1+512)/512;
+    // dim3 dimGrid2D(BlkPerRow,numsubbands);
+    Do_dedisp_subbands_GPU_cache<<<BlkPerRow,512>>>(data_gpu, data_gpu_scl, data_gpu_offs, lastdata_gpu, lastdata_gpu_scl, lastdata_gpu_offs,
                                  numpts, numchan, delays, numsubbands, result, transpose);
 
     // int BlkPerRow=(numpts*numsubbands-1+512)/512;
@@ -521,21 +521,17 @@ __global__ void Do_dedisp_subbands_GPU(float *data, float *lastdata,
                      int numpts, int numchan, 
                      int *delays, int numsubbands, float *result, int transpose)
 {
+    // int i;
+    // const int MYrow=blockIdx.y;
+    // const int MYgtid = blockDim.x * blockIdx.x + threadIdx.x;
+    // if(MYgtid>=numpts) return;
+
+    const int alltid = blockDim.x * blockIdx.x + threadIdx.x;
+    if(alltid>=numpts*numsubbands)  return;
     int i;
+    const int MYrow = alltid/numpts;
+    const int MYgtid = alltid%numpts;
 
-
-    const int MYrow=blockIdx.y;
-    const int MYgtid = blockDim.x * blockIdx.x + threadIdx.x;
-    if(MYgtid>=numpts) return;
-
-    // int MYgtid = blockDim.x * blockIdx.x + threadIdx.x;
-    // if(MYgtid>=numpts*numsubbands) return;
-    
-    // int MYrow = MYgtid/numpts;
-    // MYgtid_bk = MYgtid - MYrow*numpts;
-
-
-    
 
     float temp = 0.0f;
     int chan_per_subband = numchan / numsubbands;
@@ -567,10 +563,16 @@ __global__ void Do_dedisp_subbands_GPU_cache(unsigned char *data, float *data_sc
                      int numpts, int numchan, 
                      int *delays, int numsubbands, float *result, int transpose)
 {
+    // int i;
+    // const int MYrow=blockIdx.y;
+    // const int MYgtid = blockDim.x * blockIdx.x + threadIdx.x;
+    // if(MYgtid>=numpts) return;
+
+    const int alltid = blockDim.x * blockIdx.x + threadIdx.x;
+    if(alltid>=numpts*numsubbands)  return;
     int i;
-    const int MYrow=blockIdx.y;
-    const int MYgtid = blockDim.x * blockIdx.x + threadIdx.x;
-    if(MYgtid>=numpts) return;
+    const int MYrow = alltid/numpts;
+    const int MYgtid = alltid%numpts;
 
     float temp = 0.0f;
     int chan_per_subband = numchan / numsubbands;
@@ -600,18 +602,24 @@ __global__ void Do_dedisp_subbands_GPU_cache(unsigned char *data, float *data_sc
 
 void downsamp_GPU(float *indata, float *outdata, int numchan, int numpts, int down, int transpose)
 {
-    int BlkPerRow=(numpts-1+512)/512;
-    dim3 dimGrid2D(BlkPerRow,numchan);
-    Do_downsamp_GPU<<<dimGrid2D, 512>>>(indata, outdata, numchan, numpts, down, transpose);
+    int BlkPerRow=(numpts*numchan-1+512)/512;
+    // dim3 dimGrid2D(BlkPerRow,numchan);
+    Do_downsamp_GPU<<<BlkPerRow, 512>>>(indata, outdata, numchan, numpts, down, transpose);
     // int cudaStatus = cudaDeviceSynchronize();
 }
 
 __global__ void Do_downsamp_GPU(float *indata, float *outdata, int numchan, int numpts, int down, int transpose)
 {
+    // int i;
+    // const int MYrow=blockIdx.y;
+    // const int MYgtid = blockDim.x * blockIdx.x + threadIdx.x;
+    // if(MYgtid>=numpts) return;
+
+    const int alltid = blockDim.x * blockIdx.x + threadIdx.x;
+    if(alltid>=numpts*numchan)  return;
     int i;
-    const int MYrow=blockIdx.y;
-    const int MYgtid = blockDim.x * blockIdx.x + threadIdx.x;
-    if(MYgtid>=numpts) return;
+    const int MYrow = alltid/numpts;
+    const int MYgtid = alltid%numpts;
 
     float ftmp = 0.0f;
     
@@ -648,9 +656,9 @@ void float_dedisp_GPU(float *data, float *lastdata,
                   int *delays, float approx_mean, float *result, int numdms, int transpose)
 {
 
-    int BlkPerRow=(numpts-1+512)/512;
-    dim3 dimGrid2D(BlkPerRow,numdms);
-    Do_float_dedisp_GPU<<< dimGrid2D,512 >>>(data, lastdata, numpts, numchan,
+    int BlkPerRow=(numpts*numdms-1+512)/512;
+    // dim3 dimGrid2D(BlkPerRow,numdms);
+    Do_float_dedisp_GPU<<<BlkPerRow,512>>>(data, lastdata, numpts, numchan,
                   delays, approx_mean, result, numdms, transpose);
     // int cudaStatus = cudaDeviceSynchronize();
 }
@@ -660,10 +668,14 @@ __global__ void Do_float_dedisp_GPU(float *data, float *lastdata,
                   int numpts, int numchan,
                   int *delays, float approx_mean, float *result, int numdms, int transpose)
 {
+    // const int MYrow=blockIdx.y;
+    // const int  MYgtid = blockDim.x * blockIdx.x + threadIdx.x;
+    // if(MYgtid>=numpts) return;
+    const int alltid = blockDim.x * blockIdx.x + threadIdx.x;
+    if(alltid>=numpts*numdms) return;
+    const int MYrow = alltid/numpts;
+    const int MYgtid = alltid%numpts;
     int i;
-    const int MYrow=blockIdx.y;
-    const int  MYgtid = blockDim.x * blockIdx.x + threadIdx.x;
-    if(MYgtid>=numpts) return;
 
     
     int in_dex;
@@ -889,6 +901,29 @@ __global__ void Do_spread_with_pad_GPU(cufftComplex * data, int numdata, cufftCo
     data_bk.y *= norm;
     
     result[MYgtid*numbetween] = data_bk;
+}
+
+void spread_no_pad_gpu_dat(cufftComplex * data, int numdata, cufftComplex * result, int numresult, int numbetween, double norm, long long offset_bk, long long numpad_bk, long long newnumbins_bk)
+{
+    int BlkPerRow = (numresult-1+512)/512;
+    Do_spread_with_pad_GPU_dat<<<BlkPerRow, 512>>>(data, numdata, result, numresult, numbetween, 0, norm, offset_bk, numpad_bk, newnumbins_bk);
+    // CUDA_CHECK(cudaGetLastError());
+}
+
+__global__ void Do_spread_with_pad_GPU_dat(cufftComplex * data, int numdata, cufftComplex * result, int numresult, int numbetween, int numpad, double norm, long long offset_bk, long long numpad_bk, long long newnumbins_bk)
+{
+    const int  MYgtid = blockDim.x * blockIdx.x + threadIdx.x;
+    if(MYgtid>=numresult) return;
+
+    cufftComplex zeros = { 0.0f, 0.0f};
+    result[MYgtid] = zeros;
+    
+    if(MYgtid >= newnumbins_bk) return;
+
+    cufftComplex data_bk = data[MYgtid];
+    data_bk.x *= norm;
+    data_bk.y *= norm;
+    result[(MYgtid+offset_bk)*numbetween] = data_bk;
 }
 
 void spread_no_pad_gpu_list(cufftComplex * data, int numdata, cufftComplex * result, int numresult, int numbetween, int readdatanum, double *norm_data_gpu)

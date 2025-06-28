@@ -192,6 +192,9 @@ float  get_med_gpu(float *data, int N);
 void spread_no_pad_gpu(cufftComplex * data, int numdata, cufftComplex * result, int numresult, int numbetween, double norm);
 __global__ void Do_spread_with_pad_GPU(cufftComplex * data, int numdata, cufftComplex * result, int numresult, int numbetween, int numpad, double norm);
 
+void spread_no_pad_gpu_dat(cufftComplex * data, int numdata, cufftComplex * result, int numresult, int numbetween, double norm, long long offset_bk, long long numpad_bk, long long newnumbins_bk);
+__global__ void Do_spread_with_pad_GPU_dat(cufftComplex * data, int numdata, cufftComplex * result, int numresult, int numbetween, int numpad, double norm, long long offset_bk, long long numpad_bk, long long newnumbins_bk);
+
 void spread_no_pad_gpu_list(cufftComplex * data, int numdata, cufftComplex * result, int numresult, int numbetween, int readdatanum, double *norm_data_gpu);
 __global__ void Do_spread_with_pad_GPU_list(cufftComplex * data, int numdata, cufftComplex * result, int numresult, int numbetween, int numpad, int readdatanum, double *norm_data_gpu);
                    

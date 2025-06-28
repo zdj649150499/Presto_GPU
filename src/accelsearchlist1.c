@@ -116,7 +116,8 @@ int main(int argc, char *argv[])
 #ifdef DEBUG
     showOptionValues();
 #endif
-    
+
+    cmd->listP = 1;  
     if(cmd->listP)
     {
         printf("Read from list: %s\n", cmd->argv[0]);
@@ -227,7 +228,7 @@ int main(int argc, char *argv[])
         
         GSList *cands  = NULL ;
 
-        printf("Reading data from %d files:\n", 1);
+        printf("Reading data from file:\n", 1);
         create_accelobs_list_1(&obs, &idata, cmd, 1, kk);
         
 
@@ -311,6 +312,14 @@ int main(int argc, char *argv[])
                     }
                     fkern_gpu =  cp_kernel_array_to_gpu(subharminfs, obs.numharmstages, offset_array);
                 }
+
+                if(obs.dat_input&&obs.numbins<100000000)
+                {
+                    cudaMalloc((void**)&obs.fft_gpu, sizeof(cufftComplex)*(obs.numbins+ACCEL_PADDING));
+                    obs.fft_gpu += ACCEL_PADDING/2;
+                }
+
+
                 init_cuFFT_plans(subharminfs, obs.numharmstages, obs.inmem);
 
                 printf("Done\n");
@@ -350,6 +359,10 @@ int main(int argc, char *argv[])
             vect_free(bird_lobins);
             vect_free(bird_hibins);
         }
+
+        if(obs.dat_input&&obs.numbins<100000000)
+            cudaMemcpy(obs.fft_gpu-ACCEL_PADDING/2, obs.fft-ACCEL_PADDING/2, sizeof(cufftComplex)*(obs.numbins+ACCEL_PADDING), cudaMemcpyHostToDevice);
+
         
         cudaMemset(outpows_gpu, 0.0, sizeof(float)*subharminfs[0][0].numkern*obs.fftlen);
         // CUDA_CHECK(cudaGetLastError());
@@ -596,6 +609,9 @@ int main(int argc, char *argv[])
         cudaFree(fkern_gpu);
         cudaFree(cand_array_search_gpu);
         cudaFreeHost(cand_gpu_cpu);
+
+        if(obs.dat_input&&obs.numbins<100000000)
+            cudaFree(obs.fft_gpu-ACCEL_PADDING/2);
 
         if(!cmd->inmemP)
         {

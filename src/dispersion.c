@@ -255,9 +255,9 @@ void dedisp_subbands(float *data, float *lastdata,
         sub = result + subnum * numpts * blockN + (thisblock-1) * numpts;
         const long long loffset = ii * numpts;
         float *chan = lastdata + loffset + dind;
-#ifdef _OPENMP
-#pragma omp parallel for private(jj) shared(sub,chan,numpts)
-#endif
+// #ifdef _OPENMP
+// #pragma omp parallel for private(jj) shared(sub,chan,numpts)
+// #endif
         for (jj = 0; jj < numpts - dind; jj++)
             sub[jj] += chan[jj];
         chan = data + ii * numpts;
@@ -265,6 +265,58 @@ void dedisp_subbands(float *data, float *lastdata,
             sub[jj] += chan[kk];
     }
 }
+
+void dedisp_subbands_cache(unsigned char *data, float *data_scl, float *data_offs, unsigned char *lastdata, float *lastdata_scl, float *lastdata_offs,
+                     int numpts, int numchan,
+                     int *delays, int numsubbands, float *result, int blockN, int thisblock)
+// De-disperse a stretch of data with numpts * numchan points into
+// numsubbands subbands.  Each time point for each subband is a float
+// in the result array.  The result array order is all the times for
+// each subband, starting with lowest freq subband.  The delays (in
+// bins) are in delays for each channel.  The input data and
+// dispdelays are always in ascending frequency order.  Input data are
+// contiguous channels with all of their points in time, starting with
+// the lowest freq channel.
+{
+    const int chan_per_subband = numchan / numsubbands;
+    long long ii, jj, kk, loffset;
+    float *sub;
+
+    /* Initialize the result array */
+    // loffset = (long long)(numpts) * numsubbands;
+    // for (ii = 0; ii < loffset; ii++)
+    //     result[ii] = 0.0f;
+    
+    for (ii = 0; ii < numsubbands; ii++)
+    {
+        sub = result + (long long)(ii*numpts*blockN + (thisblock-1) * numpts);
+        for (jj = 0; jj < numpts; jj++)
+            sub[jj] = 0.0f;
+    }
+
+    /* De-disperse into the subbands */
+/* #ifdef _OPENMP */
+/* #pragma omp parallel for schedule(static,chan_per_subband)\ */
+/*    default(none) private(ii,jj) shared(result,data,lastdata,delays,numchan,numpts) */
+/* #endif */
+    for (ii = 0; ii < numchan; ii++) {
+        const int subnum = ii / chan_per_subband;
+        const int dind = delays[ii];
+        // float *sub = result + subnum * numpts;
+        sub = result + subnum * numpts * blockN + (thisblock-1) * numpts;
+        const long long loffset = ii * numpts;
+        unsigned char *chan = lastdata + loffset + dind;
+// #ifdef _OPENMP
+// #pragma omp parallel for private(jj) shared(sub,chan,numpts, lastdata_scl, lastdata_offs, data_scl, data_offs, lastdata, data, ii, dind)
+// #endif
+        for (jj = 0; jj < numpts - dind; jj++)
+            sub[jj] += (lastdata_offs[ii] + chan[jj]*lastdata_scl[ii]);
+        chan = data + ii * numpts;
+        for (jj = numpts - dind, kk = 0; jj < numpts; jj++, kk++)
+            sub[jj] += (data_offs[ii] + chan[kk]*data_scl[ii]);
+    }
+}
+
 
 
 void float_dedisp(float *data, float *lastdata,

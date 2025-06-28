@@ -119,6 +119,7 @@ int main(int argc, char *argv[])
     showOptionValues();
 #endif
     
+    cmd->listP = 1;
     if(cmd->listP)
     {
         printf("Read from list: %s\n", cmd->argv[0]);
@@ -218,7 +219,6 @@ int main(int argc, char *argv[])
 
         printf("Reading data from %d files:\n", readdatanum);
         create_accelobs_list(&obs, idata, cmd, 1, cmd->ncpus, kk, readdatanum);
-        
 
         int outpows_gpu_obs_xlen = (obs.highestbin+obs.corr_uselen)*obs.numbetween*obs.numz;
         int cand_cpu_xlen;

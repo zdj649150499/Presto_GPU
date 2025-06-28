@@ -263,6 +263,13 @@ int main(int argc, char *argv[])
             fkern_gpu =  cp_kernel_array_to_gpu(subharminfs, obs.numharmstages, offset_array);
         }
 
+        if(obs.dat_input&&obs.numbins<100000000)
+        {
+            cudaMalloc((void**)&obs.fft_gpu, sizeof(cufftComplex)*(obs.numbins+ACCEL_PADDING));
+            cudaMemcpy(obs.fft_gpu, obs.fft-ACCEL_PADDING/2, sizeof(cufftComplex)*(obs.numbins+ACCEL_PADDING), cudaMemcpyHostToDevice);
+            obs.fft_gpu += ACCEL_PADDING/2;
+        }
+
         init_cuFFT_plans(subharminfs, obs.numharmstages, obs.inmem);
         
 
@@ -402,8 +409,8 @@ int main(int argc, char *argv[])
         cudaFree(fkern_gpu);
         CUDA_CHECK(cudaGetLastError());
 
-        // if(obs.mmap_file || obs.dat_input)
-        //     cudaFree(obs.fft_gpu-ACCEL_PADDING/2);
+        if(obs.dat_input&&obs.numbins<100000000)
+            cudaFree(obs.fft_gpu-ACCEL_PADDING/2);
 
 
         cudaFree(cand_array_search_gpu);

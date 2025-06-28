@@ -1640,6 +1640,45 @@ void  *get_fourier_amplitudes_gpu(long long lobin, int numbins, accelobs * obs, 
     }
 }
 
+void  *get_fourier_amplitudes_dat(long long lobin, int numbins, accelobs * obs, fcomplex *tmpdata, long long *offset_bk, long long *firstbin_bk, long long *numpad_bk, long long *newnumbins_bk)
+{
+    static fcomplex zeros = { 0.0, 0.0 };
+
+    {
+        long long ii, offset = 0, firstbin, newnumbins;
+        // fcomplex *tmpdata = gen_cvect(numbins);
+        
+        // zero-pad if we try to read before the beginning of the FFT
+        if (lobin - obs->lobin < 0) {
+            offset = llabs(lobin - obs->lobin);
+            for (ii = 0; ii < offset; ii++)
+                tmpdata[ii] = zeros;
+        }
+        firstbin = (lobin - obs->lobin) + offset;
+        newnumbins = numbins - offset;
+
+        *offset_bk = offset;
+        *firstbin_bk = firstbin;
+        *newnumbins_bk = newnumbins;
+
+
+        // zero-pad if we try to read beyond the end of the FFT
+        if (firstbin + newnumbins > obs->numbins) {
+            long long numpad = firstbin + newnumbins - obs->numbins;
+            newnumbins = newnumbins - numpad;
+            *numpad_bk = numpad;
+            *newnumbins_bk = newnumbins;
+            for (ii = numbins - numpad; ii < numbins; ii++)
+                tmpdata[ii] = zeros;
+        }
+        else 
+            *numpad_bk = 0;
+        // Now grab the data we need
+        memcpy(tmpdata + offset, obs->fft + firstbin, sizeof(fcomplex) * newnumbins);
+        // return tmpdata;
+    }
+}
+
 void  get_fourier_amplitudes_gpu_1(long long lobin, int numbins, accelobs * obs, fcomplex *tmpdata)
 {
     static fcomplex zeros = { 0.0, 0.0 };
@@ -2142,17 +2181,32 @@ void *subharm_fderivs_vol_gpu(int numharm, int harmnum, double fullrlo, double f
             data = malloc(sizeof(fcomplex)*fftlen);
             firsttime = 0;
         }
-        // data = get_fourier_amplitudes(lobin, numdata, obs); // the data: done fft
-        get_fourier_amplitudes_gpu(lobin, numdata, obs, data);
-        cudaMemcpy(data_gpu, data, sizeof(cufftComplex) * numdata, cudaMemcpyHostToDevice);
 
-        
-        for (ii = 0; ii < numdata; ii++)
+
+        if(obs->dat_input&&obs->numbins<100000000)
+        {
+            long long offset_bk, firstbin_bk, numpad_bk, newnumbins_bk;
+            get_fourier_amplitudes_dat(lobin, numdata, obs, data, &offset_bk, &firstbin_bk, &numpad_bk, &newnumbins_bk);
+
+            for (ii = 0; ii < numdata; ii++)
                 powers[ii] = POWER(data[ii].r, data[ii].i);
-        norm_data = 1.0 / sqrt(median(powers, numdata) / log(2.0));
+            norm_data = 1.0 / sqrt(median(powers, numdata) / log(2.0));
 
-        // 等待所有操作完成
-        spread_no_pad_gpu(data_gpu, fftlen / ACCEL_NUMBETWEEN, pdata_gpu, fftlen, ACCEL_NUMBETWEEN, norm_data);
+            spread_no_pad_gpu_dat(obs->fft_gpu+firstbin_bk, fftlen / ACCEL_NUMBETWEEN, pdata_gpu, fftlen, ACCEL_NUMBETWEEN, norm_data, offset_bk, numpad_bk, newnumbins_bk);
+        }
+        else 
+        {
+            // data = get_fourier_amplitudes(lobin, numdata, obs); // the data: done fft
+            get_fourier_amplitudes_gpu(lobin, numdata, obs, data);
+                    
+            for (ii = 0; ii < numdata; ii++)
+                    powers[ii] = POWER(data[ii].r, data[ii].i);
+            norm_data = 1.0 / sqrt(median(powers, numdata) / log(2.0));
+
+            // 等待所有操作完成
+            cudaMemcpy(data_gpu, data, sizeof(cufftComplex) * numdata, cudaMemcpyHostToDevice);
+            spread_no_pad_gpu(data_gpu, fftlen / ACCEL_NUMBETWEEN, pdata_gpu, fftlen, ACCEL_NUMBETWEEN, norm_data);
+        }
 
     }
 
@@ -3395,6 +3449,8 @@ void create_accelobs_list(accelobs *obs, infodata *idata,
 {
     int ii, jj, input_shorts = 0;
     static int firsttime = 1;
+    static float **ftmp_bk;
+    static float *ftmp;
 
     
     {     
@@ -3453,12 +3509,13 @@ void create_accelobs_list(accelobs *obs, infodata *idata,
 
     
     /* Prepare the input time series if required */
-
+    if(firsttime)
+        ftmp_bk = (float **) malloc(cmd->gpu * sizeof(float *));
 
     if (obs->dat_input) {
         FILE *datfile;
         long long filelen;
-        float *ftmp;
+        
         
         printf("Reading and FFTing the time series...");
         fflush(NULL);
@@ -3482,14 +3539,17 @@ void create_accelobs_list(accelobs *obs, infodata *idata,
             /*        accessing data before or after the valid FFT freqs.    */
             
             if(firsttime)
-                // obs->fftlist[jj] = (fcomplex *)malloc((filelen + 2 * ACCEL_PADDING) * sizeof(fcomplex));
+            {   // obs->fftlist[jj] = (fcomplex *)malloc((filelen + 2 * ACCEL_PADDING) * sizeof(fcomplex));
                 obs->fftlist_f[jj] = (float *)malloc((filelen + 2 * ACCEL_PADDING) * sizeof(float));
+                ftmp_bk[jj] = obs->fftlist_f[jj];
+            }
 
             
             if (input_shorts) {
                 short *stmp = gen_svect(filelen);
                 // ftmp = gen_fvect(filelen + 2 * ACCEL_PADDING);
-                ftmp = obs->fftlist_f[jj];
+                // ftmp = obs->fftlist_f[jj];
+                ftmp = ftmp_bk[jj];
                 for (ii = 0; ii < ACCEL_PADDING; ii++) {
                     ftmp[ii] = 0.0;
                     ftmp[ii + filelen + ACCEL_PADDING] = 0.0;
@@ -3501,7 +3561,8 @@ void create_accelobs_list(accelobs *obs, infodata *idata,
             } else {
                 // ftmp = read_float_file(datfile, -ACCEL_PADDING,
                 //                     filelen + 2 * ACCEL_PADDING);
-                ftmp = obs->fftlist_f[jj];
+                // ftmp = obs->fftlist_f[jj];
+                ftmp = ftmp_bk[jj];
                 read_float_file_list(datfile, -ACCEL_PADDING,
                                     filelen + 2 * ACCEL_PADDING, ftmp);
             }
@@ -3816,6 +3877,7 @@ void create_accelobs_list_1(accelobs * obs, infodata * idata, Cmdline * cmd, int
     int ii, rootlen, input_shorts = 0;
     static int firsttime = 1;
     static float *ftmp_bk;
+    static float *ftmp;
 
     {
         int hassuffix = 0;
@@ -3881,7 +3943,7 @@ void create_accelobs_list_1(accelobs * obs, infodata * idata, Cmdline * cmd, int
     if (obs->dat_input) {
         FILE *datfile;
         long long filelen;
-        float *ftmp;
+        
 
         printf("Reading and FFTing the time series...");
         fflush(NULL);
@@ -3921,9 +3983,17 @@ void create_accelobs_list_1(accelobs * obs, infodata * idata, Cmdline * cmd, int
                 ftmp[ii + ACCEL_PADDING] = (float) stmp[ii];
             vect_free(stmp);
         } else {
-            ftmp =
-                read_float_file(datfile, -ACCEL_PADDING,
-                                filelen + 2 * ACCEL_PADDING);
+            if(firsttime)
+            {
+                ftmp = gen_fvect(filelen + 2 * ACCEL_PADDING);
+                ftmp_bk = ftmp;
+            }
+            else 
+                ftmp = ftmp_bk;
+            read_float_file_list(datfile, -ACCEL_PADDING,
+                                filelen + 2 * ACCEL_PADDING, ftmp);
+            // ftmp = read_float_file(datfile, -ACCEL_PADDING,
+            //                     filelen + 2 * ACCEL_PADDING);
         }
         /* Now, offset the pointer so that we are pointing at the first */
         /* bits of valid data.                                          */

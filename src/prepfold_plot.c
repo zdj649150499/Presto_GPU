@@ -585,7 +585,7 @@ void prepfold_plot(prepfoldinfo * search, plotflags * flags, int xwin, float *pp
             periodchi = gen_fvect(search->numperiods);
             pdotchi = gen_fvect(search->numpdots);
 
-            if(!cudaP)
+            // if(!cudaP)
             {
                 for (ii = 0; ii < search->numperiods; ii++)
                     periodchi[ii] = ppdot2d[bestipd * search->numperiods + ii];
@@ -1108,13 +1108,13 @@ void prepfold_plot(prepfoldinfo * search, plotflags * flags, int xwin, float *pp
                 ftmparr1 = gen_fvect(search->numperiods);
                 for (ii = 0; ii < search->numperiods; ii++)
                     ftmparr1[ii] = (search->periods[ii] - pfold) * 1000.0;
-                if(!cudaP)
+                // if(!cudaP)
                     find_min_max_arr(search->numperiods, periodchi, &min, &max);
-                else
-                {
-                    min = 0.0f;
-                    max = 1.0f;
-                }
+                // else
+                // {
+                //     min = 0.0f;
+                //     max = 1.0f;
+                // }
                 if (search->nsub > 1) {
                     cpgsvp(0.74, 0.94, 0.41, 0.51);
                     cpgswin(x1l, x1h, 0.0, 1.1 * max);
@@ -1142,13 +1142,13 @@ void prepfold_plot(prepfoldinfo * search, plotflags * flags, int xwin, float *pp
                 ftmparr1 = gen_fvect(search->numpdots);
                 for (ii = 0; ii < search->numpdots; ii++)
                     ftmparr1[ii] = search->pdots[ii] - pdfold;
-                if(!cudaP)
+                // if(!cudaP)
                     find_min_max_arr(search->numpdots, pdotchi, &min, &max);
-                else
-                {
-                    min = 0.0f;
-                    max = 0.0f;
-                }
+                // else
+                // {
+                //     min = 0.0f;
+                //     max = 0.0f;
+                // }
                 if (search->nsub > 1) {
                     cpgsvp(0.74, 0.94, 0.58, 0.68);
                     cpgswin(y1l, y1h, 0.0, 1.1 * max);
@@ -1407,7 +1407,7 @@ void prepfold_plot(prepfoldinfo * search, plotflags * flags, int xwin, float *pp
     vect_free(timechi);
     vect_free(periodchi);
     vect_free(pdotchi);
-    if (ppdot == NULL && !cudaP)
+    if (ppdot == NULL)
         vect_free(ppdot2d);
     if (search->nsub > 1) {
         vect_free(dmprofs);

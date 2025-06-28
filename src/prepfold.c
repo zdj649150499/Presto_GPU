@@ -1953,7 +1953,7 @@ int main(int argc, char *argv[])
                 free(max_redchi_index_Value);
 
                 
-                // if(!cmd->notjustpfdP)
+                if(!cmd->notjustpfdP)
                 {
                     cudaFree(search.rawfolds_gpu);
                     Endup_GPU();
@@ -1972,8 +1972,8 @@ int main(int argc, char *argv[])
                     if (cmd->nsub > 1) {    /* This is only for doing DM searches */
                         if (!cmd->nodmsearchP)
                             good_idm = idm;
-                        // correct_subbands_for_DM(search.dms[idm], &search, ddprofs, ddstats);
-                        correct_subbands_for_DM_1(search.dms[idm], &search, ddprofs, dmdelays_subband_int);
+                        correct_subbands_for_DM(search.dms[idm], &search, ddprofs, ddstats);
+                        // correct_subbands_for_DM_1(search.dms[idm], &search, ddprofs, dmdelays_subband_int);
                     }
 
                     for (ipdd = 0; ipdd < numpdds; ipdd++) {        /* Loop over pdds */
@@ -2000,12 +2000,12 @@ int main(int argc, char *argv[])
                                     delays[ii] = pd_delays[ii] + (double) (ii * totpdelay) / cmd->npart;
 
                                 /* Combine the profiles usingthe above computed delays */
-                                // combine_profs(ddprofs, ddstats, cmd->npart,
-                                //               search.proflen, delays, currentprof,
-                                //               &currentstats);
-                                combine_profs_1(ddprofs, ddstats, cmd->npart,
-                                            search.proflen, delays, currentprof,
-                                            &currentstats);
+                                combine_profs(ddprofs, ddstats, cmd->npart,
+                                              search.proflen, delays, currentprof,
+                                              &currentstats);
+                                // combine_profs_1(ddprofs, ddstats, cmd->npart,
+                                //             search.proflen, delays, currentprof,
+                                //             &currentstats);
 
                                 /* If this is a simple fold, create the chi-square p-pdot plane */
                                 if (cmd->nsub == 1 && !cmd->searchpddP)
@@ -2243,14 +2243,14 @@ int main(int argc, char *argv[])
         vect_free(idispdts);
     }
 
-    // if(cmd->cudaP == 1 && cmd->nsub > 1 && cmd->notjustpfdP)
-    // {
-    //     // cudaStreamDestroy(stream_1);
-    //     // cudaStreamDestroy(stream_2);
+    if(cmd->cudaP == 1 && cmd->nsub > 1 && cmd->notjustpfdP)
+    {
+        // cudaStreamDestroy(stream_1);
+        // cudaStreamDestroy(stream_2);
         
-    //     cudaFree(search.rawfolds_gpu);
-    //     Endup_GPU();
-    // }
+        cudaFree(search.rawfolds_gpu);
+        Endup_GPU();
+    }
 
 
     printf("Done.\n\n");

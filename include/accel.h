@@ -180,6 +180,7 @@ void free_accelcand(gpointer data, gpointer user_data);
 void print_accelcand(gpointer data, gpointer user_data);
 fcomplex *get_fourier_amplitudes(long long lobin, int numbins, accelobs *obs);
 void  *get_fourier_amplitudes_gpu(long long lobin, int numbins, accelobs * obs, fcomplex *tmpdata);
+void  *get_fourier_amplitudes_dat(long long lobin, int numbins, accelobs * obs, fcomplex *tmpdata, long long *offset_bk, long long *firstbin_bk, long long *numpad_bk, long long *newnumbins_bk);
 void  get_fourier_amplitudes_gpu_1(long long lobin, int numbins, accelobs * obs, fcomplex *tmpdata);
 
 void  *get_fourier_amplitudes_gpu_list(long long lobin, int numbins, accelobs * obs, fcomplex *tmpdata, int readdatanumid);
