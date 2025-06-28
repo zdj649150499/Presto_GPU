@@ -81,8 +81,8 @@ For the version of GPU_v2.1, you can use `accelsearchlist1` or `accelsearchlistm
 # input with a .dat.list, and use the accelsearchlist1 for searching:
 $ accelsearchlist1 -cuda 0 -numharm 32 -zmax 200  cccccc.dat.list
 
-# or use the accelsearchlistm for multi-.dat file at once: 
-$ accelsearchlistm -ncpus 10 -gput 10 -cuda 0 -numharm 32 -zmax 200  cccccc.dat.list
+# or use the accelsearchlistm for multi-.dat file at once: (some error in RTX GPU)
+# $ accelsearchlistm -ncpus 10 -gput 10 -cuda 0 -numharm 32 -zmax 200  cccccc.dat.list
 ```
 
 
