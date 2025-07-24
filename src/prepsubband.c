@@ -119,6 +119,8 @@ int main(int argc, char *argv[])
         exit(0);
     }
 
+    
+
     /* Parse the command line using the excellent program Clig */
 
     cmd = parseCmdline(argc, argv);
@@ -465,6 +467,7 @@ int main(int argc, char *argv[])
             subsdata = gen_smatrix(cmd->nsub, worklen / cmd->downsamp);
         else
             outdata = gen_fmatrix(cmd->numdms, worklen / cmd->downsamp);
+        
         numread = get_data(outdata, blocksperread, &s,
                            &obsmask, idispdt, offsets, &padding, subsdata);
 
@@ -819,7 +822,6 @@ int main(int argc, char *argv[])
     }
     //  Close all the raw files and free their vectors
     close_rawfiles(&s);
-    
     
     if (cmd->subP) {
         vect_free(subsdata[0]);

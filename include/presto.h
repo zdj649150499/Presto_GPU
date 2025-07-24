@@ -1314,8 +1314,7 @@ double fold(float *data, int numdata, double dt, double tlo,
 	    double *buffer, double *phaseadded, 
 	    double fo, double fdot, double fdotdot, int flags, 
 	    double *delays, double *delaytimes, int numdelays, 
-	    int *onoffpairs, foldstats *stats, int standard);
-
+	    int *onoffpairs, foldstats *stats, int standard, double avg);
 /* This routine is a general pulsar folding algorithm.  It will fold  */
 /* data for a pulsar with single and double frequency derivatives and */
 /* with arbitrary pulse delays (for example: variable time delays     */

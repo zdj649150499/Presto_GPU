@@ -159,6 +159,7 @@ void create_accelobs(accelobs *obs, infodata *idata,
 void create_accelobs_list(accelobs *obs, infodata *idata, 
 		     Cmdline *cmd, int usemmap, int thread, int kk, int readdatanum);
 void create_accelobs_list_1(accelobs * obs, infodata * idata, Cmdline * cmd, int usemmap, int readid);
+void create_accelobs_list_2(accelobs * obs, infodata * idata, Cmdline * cmd, int usemmap, int readid);
 
 
 GSList *sort_accelcands(GSList *list);
@@ -221,6 +222,11 @@ void add_ffdotpows(ffdotpows *fundamental, ffdotpows *subharmonic,
 GSList *search_ffdotpows(ffdotpows *ffdot, int numharm, 
                          accelobs *obs, GSList *cands);
 GSList *search_ffdotpows_sort_gpu_result(ffdotpows * ffdot, int numharm,
+                         accelobs * obs, GSList * cands, accel_cand_gpu *cand_gpu_cpu, int nof_cand);
+GSList *search_ffdotpows_sort_gpu_result_listm(ffdotpows * ffdot, int numharm,
+                         accelobs * obs, GSList * cands, accel_cand_gpu *cand_gpu_cpu, int nof_cand, int readid);
+
+GSList *search_ffdotpows_sort_gpu_result_t(long long ffdot_rlo, int ffdot_zlo, int numharm,
                          accelobs * obs, GSList * cands, accel_cand_gpu *cand_gpu_cpu, int nof_cand);
 void free_accelobs(accelobs *obs);
 

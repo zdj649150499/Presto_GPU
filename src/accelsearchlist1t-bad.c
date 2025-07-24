@@ -1,4 +1,6 @@
 #include "accel.h"
+#include <pthread.h>
+#include <stdbool.h>
 
 // #include "cuda.cuh"
 
@@ -23,6 +25,76 @@ extern void set_openmp_numthreads(int numthreads);
 extern float calc_median_powers(fcomplex * amplitudes, int numamps);
 extern void zapbirds(double lobin, double hibin, FILE * fftfile, fcomplex * fft);
 
+int all_done = 0;
+pthread_mutex_t mutex_lock;
+bool main_ready;               // 主线程完成正在执行
+bool sub_ready;             // 任务是否正在执行
+
+pthread_cond_t  main_cond;
+pthread_cond_t  sub_cond;
+
+// ========== 新增结构体与线程相关变量 ==========
+typedef struct {
+    accel_cand_gpu *cand_data;
+    long long ffdot_rlo;
+    int ffdot_zlo;
+    int harmtosum;
+    accelobs *obs;
+    GSList **cands;
+    int nof_cand;
+} ThreadTask;
+
+static ThreadTask g_task;
+static pthread_t worker_thread;
+
+void* worker_func(void* arg) {
+    while (1) {
+        pthread_mutex_lock(&mutex_lock);
+        
+        while (main_ready ==  false) // 无任务就等待
+        {
+            sub_ready = true;
+            pthread_cond_signal(&main_cond); // 通知主线程
+            pthread_cond_wait(&sub_cond, &mutex_lock);
+        }
+        if (all_done) break; // 退出信号
+
+        ThreadTask *task = (ThreadTask *)arg;
+        sub_ready = false;
+        
+        // 执行实际任务
+        *(task->cands) = search_ffdotpows_sort_gpu_result_t(
+            task->ffdot_rlo, task->ffdot_zlo, task->harmtosum, task->obs,
+            *(task->cands), task->cand_data, task->nof_cand);
+        
+        sub_ready = true;
+        pthread_cond_signal(&main_cond); // 通知主线程
+        pthread_mutex_unlock(&mutex_lock);
+    }
+    return NULL;
+}
+
+// ========== 初始化线程函数 ==========
+void init_worker_thread() {
+    pthread_mutex_init(&mutex_lock, NULL);
+    pthread_cond_init(&main_cond, NULL);
+    pthread_cond_init(&sub_cond, NULL);
+    // pthread_cond_init(&g_task.done_cond, NULL);
+    main_ready = false;
+    sub_ready = true;  // 初始状态未运行
+    pthread_create(&worker_thread, NULL, worker_func, &g_task);
+}
+
+
+void cleanup_worker_thread() {
+    
+    pthread_join(worker_thread, NULL);
+    
+    pthread_mutex_destroy(&mutex_lock);
+    pthread_cond_destroy(&main_cond);
+    pthread_cond_destroy(&sub_cond);
+    // pthread_cond_destroy(&g_task.done_cond);
+}
 
 
 static void print_percent_complete(int current, int number, char *what, int reset)
@@ -61,15 +133,13 @@ static inline int twon_to_index(int n)
 int main(int argc, char *argv[])
 {
     int ii, jj, rstep, kk;
-    double ttim, utim, stim, tott, tott_1;
+    double ttim, utim, stim, tott;
     struct tms runtimes;
     subharminfo **subharminfs;
     accelobs obs;
     infodata idata;
     // GSList *cands  = NULL ;
     Cmdline *cmd;
-
-    tott = times(&runtimes) / (double) CLK_TCK;
 
     cufftComplex *pdata_gpu;
     cufftComplex *fkern_gpu;
@@ -90,7 +160,7 @@ int main(int argc, char *argv[])
 
     accel_cand_gpu *cand_array_search_gpu;
 	// accel_cand_gpu *cand_array_sort_gpu;	
-    accel_cand_gpu *cand_gpu_cpu;	
+    accel_cand_gpu **cand_gpu_cpu;	
     cufftComplex *pdata;
     cufftComplex *data_gpu;
     float *power;
@@ -225,8 +295,15 @@ int main(int argc, char *argv[])
         }
     }
     
+    accel_cand_gpu *cand_gpu_cpu_buffer[2];
+    int current_buffer = 0;
+
+    if(cmd->cudaP)
+        init_worker_thread();
+
     for(kk=0; kk < fornum; kk++)
     {
+        
         
         GSList *cands  = NULL ;
 
@@ -284,8 +361,10 @@ int main(int argc, char *argv[])
 
                 cudaMalloc((void **)&cand_array_search_gpu, subharminfs[0][0].numkern * subharminfs[0][0].kern[0][0].fftlen * sizeof(accel_cand_gpu));
                 // cudaMalloc((void **)&cand_array_sort_gpu, subharminfs[0][0].numkern * subharminfs[0][0].kern[0][0].fftlen * sizeof(accel_cand_gpu));
-                cudaMallocHost((void**)&cand_gpu_cpu, sizeof(accel_cand_gpu)*subharminfs[0][0].numkern * subharminfs[0][0].kern[0][0].fftlen);
-
+                cudaMallocHost((void**)&cand_gpu_cpu, sizeof(accel_cand_gpu*)*2);
+                for (ii = 0; ii < 2; ii++) {
+                    cudaMallocHost((void**)&cand_gpu_cpu[ii], sizeof(accel_cand_gpu)*subharminfs[0][0].numkern * subharminfs[0][0].kern[0][0].fftlen);
+                }
 
                 if(cmd->inmemP)
                 {
@@ -376,7 +455,7 @@ int main(int argc, char *argv[])
         /* Start the main search loop */
         // for(ii=0; ii<readdatanum; ii++)
         {
-            tott_1 = times(&runtimes) / (double) CLK_TCK;
+            tott = times(&runtimes) / (double) CLK_TCK;
 
             // printf("Starting the main search loop data : %s ... \n", cmd->datalist[ii+kk*cmd->gpu]);
             printf("Starting the main search loop data ... \n");
@@ -417,11 +496,11 @@ int main(int argc, char *argv[])
             lastr = 0;
             nextr = 0;
 
-        
             while (startr + rstep < obs.highestbin) {
                 /* Search the fundamental */
                 nextr = startr + rstep;
                 lastr = nextr - ACCEL_DR;
+                
                 if(!cmd->cudaP)
                 {
                     fundamental = subharm_fderivs_vol(1, 1, startr, lastr,
@@ -440,8 +519,39 @@ int main(int argc, char *argv[])
                     }
                     else
                         get_rind_zind_gpu(d_rinds_gpu, d_zinds_gpu, d_rinds_cpu, d_zinds_cpu, obs.numharmstages, obs, startr);
-                    nof_cand = search_ffdotpows_gpu(obs.powcut[twon_to_index(1)], outpows_gpu, cand_array_search_gpu, fundamental->numzs, fundamental->numrs, cand_gpu_cpu);
-                    cands = search_ffdotpows_sort_gpu_result(fundamental, 1, &obs, cands, cand_gpu_cpu, nof_cand);
+                    nof_cand = search_ffdotpows_gpu(obs.powcut[twon_to_index(1)], outpows_gpu, cand_array_search_gpu, fundamental->numzs, fundamental->numrs, cand_gpu_cpu[current_buffer]);
+                    // cands = search_ffdotpows_sort_gpu_result(fundamental, 1, &obs, cands, cand_gpu_cpu[current_buffer], nof_cand);
+                    // ========== 主线程派发任务（替换原 search_ffdotpows_sort_gpu_result 调用） ==========
+                    {
+                        pthread_mutex_lock(&mutex_lock);
+                        
+                        // 等待前一个任务完成
+                        while (sub_ready ==  false)
+                        {
+                            // main_ready = true;  // 标记有新任务
+                            // pthread_cond_signal(&sub_cond);
+                            pthread_cond_wait(&main_cond, &mutex_lock);
+                        }
+
+                        // 设置新任务参数
+                        g_task.cand_data = cand_gpu_cpu[current_buffer];
+                        g_task.ffdot_rlo = fundamental->rlo;  // 注意：必须在释放前复制
+                        g_task.ffdot_zlo = fundamental->zlo;
+                        g_task.harmtosum = harmtosum;
+                        g_task.obs = &obs;
+                        g_task.cands = &cands;
+                        g_task.nof_cand = nof_cand;
+                        
+                        
+                        // sub_ready = false;
+                        main_ready = true;  // 标记有新任务
+                        // 通知工作线程
+                        pthread_cond_signal(&sub_cond);
+                        pthread_mutex_unlock(&mutex_lock);
+
+                        main_ready = false;  // 标记有新任务
+                        current_buffer = 1 - current_buffer;  // 切换缓冲区
+                    }
                 }
                 if (obs.numharmstages > 1) {        /* Search the subharmonics */
 
@@ -480,15 +590,46 @@ int main(int argc, char *argv[])
                                     subharm_fderivs_vol_gpu(harmtosum, harm, startr, lastr,
                                                 &subharminfs[stage][harm-1], &obs, fkern_gpu, pdata_gpu, tmpdat_gpu, tmpdat_gpu, outpows_gpu, outpows_gpu_obs, pdata, 0, d_zinds_gpu, d_rinds_gpu, d_zinds_cpu, d_rinds_cpu, fundamental, offset_array, stage, data_gpu, power);
                             }
-                            nof_cand = search_ffdotpows_gpu(obs.powcut[twon_to_index(harmtosum)], outpows_gpu, cand_array_search_gpu, fundamental->numzs, fundamental->numrs, cand_gpu_cpu);                        
-                            cands = search_ffdotpows_sort_gpu_result(fundamental, harmtosum, &obs, cands, cand_gpu_cpu, nof_cand);
+                            nof_cand = search_ffdotpows_gpu(obs.powcut[twon_to_index(harmtosum)], outpows_gpu, cand_array_search_gpu, fundamental->numzs, fundamental->numrs, cand_gpu_cpu[current_buffer]);                        
+                            // cands = search_ffdotpows_sort_gpu_result(fundamental, harmtosum, &obs, cands, cand_gpu_cpu, nof_cand);
+                            // ========== 主线程派发任务（替换原 search_ffdotpows_sort_gpu_result 调用） ==========
+                            {
+                                pthread_mutex_lock(&mutex_lock);
+                                main_ready = true;  // 标记有新任务
+                                // 等待前一个任务完成
+                                while (sub_ready == false)
+                                {
+                                    // main_ready = true;  // 标记有新任务
+                                    // pthread_cond_signal(&sub_cond);
+                                    pthread_cond_wait(&main_cond, &mutex_lock);
+                                }
+
+                                // 设置新任务参数
+                                g_task.cand_data = cand_gpu_cpu[current_buffer];
+                                g_task.ffdot_rlo = fundamental->rlo;  // 注意：必须在释放前复制
+                                g_task.ffdot_zlo = fundamental->zlo;
+                                g_task.harmtosum = harmtosum;
+                                g_task.obs = &obs;
+                                g_task.cands = &cands;
+                                g_task.nof_cand = nof_cand;
+                                                                
+                                // 通知工作线程
+                                main_ready = true;  // 标记有新任务
+                                pthread_cond_signal(&sub_cond);
+                                pthread_mutex_unlock(&mutex_lock);
+                                
+                                main_ready = false;  // 标记有新任务
+                                current_buffer = 1 - current_buffer;  // 切换缓冲区
+                            }
                         }
                     }
                 }
                 if(!cmd->cudaP)
                     free_ffdotpows(fundamental);
-                else
+                else  
                     free(fundamental);
+                
+                    
                 startr = nextr;
             }
             print_percent_complete(obs.highestbin - obs.rlo,
@@ -501,14 +642,30 @@ int main(int argc, char *argv[])
             }
             
             printf("\nTiming summary:\n");
-            tott_1 = times(&runtimes) / (double) CLK_TCK - tott_1;
+            tott = times(&runtimes) / (double) CLK_TCK - tott;
             utim = runtimes.tms_utime / (double) CLK_TCK;
             stim = runtimes.tms_stime / (double) CLK_TCK;
             ttim = utim + stim;
             printf("    CPU time: %.3f sec (User: %.3f sec, System: %.3f sec)\n",
                 ttim, utim, stim);
-            printf("  Total time: %.3f sec\n\n", tott_1);
+            printf("  Total time: %.3f sec\n\n", tott);
         }
+
+        if(cmd->cudaP)
+        {
+            pthread_mutex_lock(&mutex_lock);
+            main_ready = true;  // 标记有新任务
+            while (sub_ready == false)
+                pthread_cond_wait(&main_cond, &mutex_lock);
+            
+            // main_ready = true;  // 标记有新任务
+            // all_done = 1;
+            // // 通知工作线程
+            // pthread_cond_signal(&sub_cond);
+            // pthread_mutex_unlock(&mutex_lock);
+        }
+
+        
         
 
 
@@ -596,6 +753,8 @@ int main(int argc, char *argv[])
 
     if(cmd->cudaP)
     {
+        cleanup_worker_thread();
+
         cudaFree(outpows_gpu);
         if(cmd->inmemP)
         {
@@ -646,17 +805,6 @@ int main(int argc, char *argv[])
         vect_free(bird_lobins);
         vect_free(bird_hibins);
     }
-
-
-    printf("\nTiming summary:\n");
-    tott = times(&runtimes) / (double) CLK_TCK - tott;
-    utim = runtimes.tms_utime / (double) CLK_TCK;
-    stim = runtimes.tms_stime / (double) CLK_TCK;
-    ttim = utim + stim;
-    printf("    CPU time: %.3f sec (User: %.3f sec, System: %.3f sec)\n",
-        ttim, utim, stim);
-    printf("  Total time: %.3f sec\n\n", tott);
-
     
 
     // for(ii=0; ii<cmd->gpu; ii++)

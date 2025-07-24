@@ -153,7 +153,7 @@ void select_cuda_dev(int cuda_inds)
 {
 	cudaSetDevice(cuda_inds);
     // CUDA_CHECK(cudaGetLastError());
-	cudaDeviceReset();
+	// cudaDeviceReset();
     // CUDA_CHECK(cudaGetLastError());
 }
 
@@ -161,7 +161,7 @@ void select_cuda_dev(int cuda_inds)
 void Endup_GPU()
 {
     cudaDeviceSynchronize();
-    cudaDeviceReset();
+    // cudaDeviceReset();
 }
 
 
@@ -915,15 +915,26 @@ __global__ void Do_spread_with_pad_GPU_dat(cufftComplex * data, int numdata, cuf
     const int  MYgtid = blockDim.x * blockIdx.x + threadIdx.x;
     if(MYgtid>=numresult) return;
 
-    cufftComplex zeros = { 0.0f, 0.0f};
-    result[MYgtid] = zeros;
-    
-    if(MYgtid >= newnumbins_bk) return;
+    const long long data_idx = (MYgtid - offset_bk * numbetween);
+    const bool is_data_pos = (MYgtid % numbetween == 0) && 
+                            (data_idx >= 0) && 
+                            (data_idx < newnumbins_bk * numbetween);
+    if (!is_data_pos) {
+        result[MYgtid] = {0.0f, 0.0f};
+    }
 
-    cufftComplex data_bk = data[MYgtid];
-    data_bk.x *= norm;
-    data_bk.y *= norm;
-    result[(MYgtid+offset_bk)*numbetween] = data_bk;
+    const float data_bk_x =  __ldg(&data[MYgtid].x) * norm;
+    const float data_bk_y =  __ldg(&data[MYgtid].y) * norm;
+    result[(MYgtid+offset_bk)*numbetween] = {data_bk_x, data_bk_y};
+
+    // result[MYgtid] = {0.0f, 0.0f};
+    
+    // if(MYgtid >= newnumbins_bk) return;
+
+    // cufftComplex data_bk = data[MYgtid];
+    // data_bk.x *= norm;
+    // data_bk.y *= norm;
+    // result[(MYgtid+offset_bk)*numbetween] = data_bk;
 }
 
 void spread_no_pad_gpu_list(cufftComplex * data, int numdata, cufftComplex * result, int numresult, int numbetween, int readdatanum, double *norm_data_gpu)
@@ -965,19 +976,28 @@ void loops_in_GPU_1(cufftComplex *fpdata, cufftComplex *fkern, cufftComplex *out
     // CUDA_CHECK(cudaGetLastError());
 }
 
-__global__ void Do_loops_in_GPU_1(cufftComplex *fpdata, cufftComplex *fkern, cufftComplex *outdata, int fftlen, int numzs)
+static __global__ void Do_loops_in_GPU_1(cufftComplex *fpdata, cufftComplex *fkern, cufftComplex *outdata, int fftlen, int numzs)
 {
     const int  MYgtid = blockDim.x * blockIdx.x + threadIdx.x;
     if(MYgtid>=fftlen*numzs) return;
     const int xnum = MYgtid%fftlen;
 
-    const float dr = fpdata[xnum].x, di = fpdata[xnum].y;
-    const float kr = fkern[MYgtid].x, ki = fkern[MYgtid].y;
+    const float dr = __ldg(&fpdata[xnum].x);
+    const float di = __ldg(&fpdata[xnum].y);
+    const float kr = __ldg(&fkern[MYgtid].x);
+    const float ki = __ldg(&fkern[MYgtid].y);
+    
     cufftComplex outdata_bk;
-    outdata_bk.x = dr * kr + di * ki;
-    outdata_bk.y = di * kr - dr * ki;
-
+    outdata_bk.x = fmaf(dr, kr, di * ki);  // fused multiply-add
+    outdata_bk.y = fmaf(di, kr, -dr * ki);
     outdata[MYgtid] = outdata_bk;
+
+    // const float dr = fpdata[xnum].x, di = fpdata[xnum].y;
+    // const float kr = fkern[MYgtid].x, ki = fkern[MYgtid].y;
+    // cufftComplex outdata_bk;
+    // outdata_bk.x = dr * kr + di * ki;
+    // outdata_bk.y = di * kr - dr * ki;
+    // outdata[MYgtid] = outdata_bk;
 }
 
 void loops_in_GPU_1_list(cufftComplex *fpdata, cufftComplex *fkern, cufftComplex *outdata, int fftlen, int numzs, int readdatanum)
@@ -1022,11 +1042,19 @@ static __global__ void Do_loops_in_GPU_2(cufftComplex *fdata,  float *outpows, i
     const int xnum = MYgtid - ynum*numrs;
     const int ind = xnum+offset + ynum*fftlen;
 
-    Complex fdata_b = fdata[ind];
+    // Complex fdata_b = fdata[ind];
+    const float fr = __ldg(&fdata[ind].x);
+    const float fi = __ldg(&fdata[ind].y);
+
     if(tip)
-        outpows[MYgtid] = outpows_obs[ynum*rlen+xnum+rlo] = (fdata_b.x*fdata_b.x +  fdata_b.y*fdata_b.y) * norm;
+        outpows[MYgtid] = outpows_obs[ynum*rlen+xnum+rlo] = fmaf(fr, fr, fi*fi)* norm; //(fdata_b.x*fdata_b.x +  fdata_b.y*fdata_b.y) * norm;
     else
-        outpows[MYgtid] = (fdata_b.x*fdata_b.x + fdata_b.y*fdata_b.y) * norm;
+        outpows[MYgtid] = fmaf(fr, fr, fi*fi)* norm;
+
+    // if(tip)
+    //     outpows[MYgtid] = outpows_obs[ynum*rlen+xnum+rlo] = (fdata_b.x*fdata_b.x +  fdata_b.y*fdata_b.y) * norm;
+    // else
+    //     outpows[MYgtid] = (fdata_b.x*fdata_b.x + fdata_b.y*fdata_b.y) * norm;
 }
 
 void loops_in_GPU_2_list(cufftComplex *fdata,  float *outpows, int numrs, int numzs, int offset, int fftlen, float norm, float *outpows_obs, long long rlen, long long rlo, int tip, int readdatanum, int outpows_gpu_xlen, int outpows_gpu_obs_xlen)
@@ -1067,12 +1095,16 @@ static __global__ void Do_add_subharm_gpu(float *powers_out, cufftComplex *fdata
     if(MYgtid>=numrs_0*numzs_0) return;
 
     int yy = MYgtid/numrs_0 ;
-    int addr_z = zinds[yy];
+    // int addr_z = zinds[yy];
+    const int addr_z = __ldg(&zinds[yy]);
     int xx = MYgtid -  yy * numrs_0 ;
-    int addr_r = rinds[xx];
+    // int addr_r = rinds[xx];
+    const int addr_r = __ldg(&rinds[xx]);
     int addr_result = addr_z * fftlen + addr_r + offset;
 
     Complex fdata_b = fdata[addr_result];
+
+    // atomicAdd(&powers_out[MYgtid], ((fdata_b.x*fdata_b.x +  fdata_b.y*fdata_b.y)*norm));
     powers_out[MYgtid] += ((fdata_b.x*fdata_b.x +  fdata_b.y*fdata_b.y)*norm);
 }
 
@@ -1871,7 +1903,8 @@ void combine_profs_1_gpu(double *profs, double *delays, int numprofs, int profle
 {
     int BlkPerRow = (nump*numpd*numpdd-1+512)/512;
     // combine_profs_1_gpu_Do<<<BlkPerRow, 512>>>(profs, delays, numprofs, proflen, numpdd, numtrials, outstats_prof_avg, outstats_prof_var, currentstats_redchi);
-    combine_profs_1_gpu_Do<<<BlkPerRow, 512, numprofs * sizeof(double)>>>(profs, delays, numprofs, proflen, numpdd, numpd, nump, outstats_prof_avg, outstats_prof_var, currentstats_redchi);
+    // combine_profs_1_gpu_Do<<<BlkPerRow, 512, numprofs * sizeof(double)>>>(profs, delays, numprofs, proflen, numpdd, numpd, nump, outstats_prof_avg, outstats_prof_var, currentstats_redchi);
+    combine_profs_1_gpu_Do<<<BlkPerRow, 512>>>(profs, delays, numprofs, proflen, numpdd, numpd, nump, outstats_prof_avg, outstats_prof_var, currentstats_redchi);
 }
 
 __global__ void combine_profs_1_gpu_Do(double *profs, double *delays, int numprofs, int proflen, int numpdd, int numpd, int nump, double outstats_prof_avg, double outstats_prof_var, double *currentstats_redchi)

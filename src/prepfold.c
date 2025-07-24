@@ -1432,6 +1432,7 @@ int main(int argc, char *argv[])
                     //         !cmd->samplesP);
                     
                     /* Fold the frequency sub-bands */
+                    double avg = 0.0;
                     for (kk = 0; kk < cmd->nsub; kk++) {
                         fold(data + kk * worklen, numread, search.dt,
                             fold_time0,
@@ -1439,7 +1440,7 @@ int main(int argc, char *argv[])
                             search.proflen, cmd->phs, buffers + kk * search.proflen,
                             phasesadded + kk, foldf, foldfd, foldfdd, flags, Ep, tp,
                             numdelays, NULL, &(search.stats[ii * cmd->nsub + kk]),
-                            !cmd->samplesP);
+                            !cmd->samplesP, avg);
                     }
                     totnumfolded += numread;
                 }
@@ -1555,29 +1556,29 @@ int main(int argc, char *argv[])
                     #pragma omp parallel for default(shared)
                     #endif
                     for (kk = 0; kk < cmd->nsub; kk++) {
+                        int kklen = kk * worklen;
+                        double avg = 0.0;
                         /* This is a quick hack to see if it will remove power drifts */
                         if (cmd->runavgP && (numread > 0)) {
                             int dataptr;
-                            double avg;
                             // avg_var(data + kk * worklen, numread, &avg, &var);
 
                             int meanbkjj;
-                            avg = 0.0;
                             for(meanbkjj = 0; meanbkjj<numread; meanbkjj++)
                             {
-                                avg += data[kk *worklen + meanbkjj];
+                                avg += data[kklen + meanbkjj];
                             }
                             avg /= numread;
-                            for (dataptr = 0; dataptr < worklen; dataptr++)
-                                data[kk * worklen + dataptr] -= avg;
+                            // for (dataptr = 0; dataptr < worklen; dataptr++)
+                            //     data[kklen + dataptr] -= avg;
                         }
-                        fold(data + kk * worklen, numread, search.dt,
+                        fold(data + kklen, numread, search.dt,
                             fold_time0,
                             search.rawfolds + (ii * cmd->nsub + kk) * search.proflen,
                             search.proflen, cmd->phs, buffers + kk * search.proflen,
                             phasesadded + kk, foldf, foldfd, foldfdd, flags, Ep, tp,
                             numdelays, NULL, &(search.stats[ii * cmd->nsub + kk]),
-                            !cmd->samplesP);
+                            !cmd->samplesP, avg);
                     }
                     // printf("\n");
                     // if(jj==1)

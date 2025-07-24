@@ -421,16 +421,13 @@ int main(int argc, char *argv[])
 
                     search_ffdotpows_gpu_list(obs.powcut[twon_to_index(1)], outpows_gpu, cand_array_search_gpu, fundamental->numzs, fundamental->numrs, cand_gpu_cpu, readdatanum, nof_cand, cand_cpu_xlen, outpows_xlen);
 
-
+                    // #ifdef _OPENMP
+                    // #pragma omp parallel for schedule(dynamic) shared(readdatanum, fundamental, cands, obs, ii, cand_gpu_cpu, nof_cand)
+                    // #endif
                     for(ii=0; ii<readdatanum; ii++)
                     {
-                        // subharm_fderivs_vol_gpu_1(1, 1, startr, lastr, &subharminfs[0][0], &obs, fkern_gpu, pdata_gpu+ii*fftlen, tmpdat_gpu+ii*fftlen*numzs, tmpdat_gpu+ii*fftlen*numzs, outpows_gpu+ii*outpows_xlen, outpows_gpu_obs, pdata, obs.inmem, d_zinds_gpu, d_rinds_gpu, d_zinds_cpu, d_rinds_cpu, fundamental, offset_array, 0, data_gpu+ii*fftlen, power+ii*fftlen/ACCEL_NUMBETWEEN, ii);
-
-                        // get_rind_zind_gpu(d_rinds_gpu, d_zinds_gpu, d_rinds_cpu, d_zinds_cpu, obs.numharmstages, obs, startr);
-
-                        // nof_cand[ii] = search_ffdotpows_gpu(obs.powcut[twon_to_index(1)], outpows_gpu+ii*outpows_xlen, cand_array_search_gpu+ii*cand_cpu_xlen, fundamental->numzs, fundamental->numrs, cand_gpu_cpu+ii*cand_cpu_xlen);
-
-                        cands[ii] = search_ffdotpows_sort_gpu_result(fundamental, 1, &obs, cands[ii], cand_gpu_cpu+ii*cand_cpu_xlen, nof_cand[ii]);
+                        // cands[ii] = search_ffdotpows_sort_gpu_result(fundamental, 1, &obs, cands[ii], cand_gpu_cpu+ii*cand_cpu_xlen, nof_cand[ii]);
+                        cands[ii] = search_ffdotpows_sort_gpu_result_listm(fundamental, 1, &obs, cands[ii], cand_gpu_cpu+ii*cand_cpu_xlen, nof_cand[ii], ii);
                     }
 
                 }
@@ -449,14 +446,13 @@ int main(int argc, char *argv[])
 
                             search_ffdotpows_gpu_list(obs.powcut[twon_to_index(harmtosum)], outpows_gpu, cand_array_search_gpu, fundamental->numzs, fundamental->numrs, cand_gpu_cpu, readdatanum, nof_cand, cand_cpu_xlen, outpows_xlen); 
 
+                            // #ifdef _OPENMP
+                            // #pragma omp parallel for schedule(dynamic) shared(readdatanum, fundamental, harmtosum, cands, obs, ii, cand_gpu_cpu, nof_cand)
+                            // #endif
                             for(ii=0; ii<readdatanum; ii++)
                             {
-                                // for (harm = 1; harm < harmtosum; harm += 2)
-                                //     subharm_fderivs_vol_gpu_1(harmtosum, harm, startr, lastr, &subharminfs[stage][harm-1], &obs, fkern_gpu, pdata_gpu+ii*fftlen, tmpdat_gpu+ii*fftlen*numzs, tmpdat_gpu+ii*fftlen*numzs, outpows_gpu+ii*outpows_xlen, outpows_gpu_obs, pdata, 0, d_zinds_gpu, d_rinds_gpu, d_zinds_cpu, d_rinds_cpu, fundamental, offset_array, stage, data_gpu+ii*fftlen, power+ii*fftlen/ACCEL_NUMBETWEEN, ii);
-
-                                // nof_cand[ii] = search_ffdotpows_gpu(obs.powcut[twon_to_index(harmtosum)], outpows_gpu+ii*outpows_xlen, cand_array_search_gpu+ii*cand_cpu_xlen, fundamental->numzs, fundamental->numrs, cand_gpu_cpu+ii*cand_cpu_xlen);    
-
-                                cands[ii] = search_ffdotpows_sort_gpu_result(fundamental, harmtosum, &obs, cands[ii], cand_gpu_cpu+ii*cand_cpu_xlen, nof_cand[ii]);
+                                // cands[ii] = search_ffdotpows_sort_gpu_result(fundamental, harmtosum, &obs, cands[ii], cand_gpu_cpu+ii*cand_cpu_xlen, nof_cand[ii]);
+                                cands[ii] = search_ffdotpows_sort_gpu_result_listm(fundamental, harmtosum, &obs, cands[ii], cand_gpu_cpu+ii*cand_cpu_xlen, nof_cand[ii], ii);
                             }                            
                         }
                     }
@@ -482,9 +478,10 @@ int main(int argc, char *argv[])
                 ttim, utim, stim);
             printf("  Total time: %.3f sec\n\n", tott);
         }
-
+    
         #ifdef _OPENMP
-        #pragma omp parallel for schedule(dynamic) private(jj) shared(readdatanum, cands, cmd, obs, idata, ii)
+        #pragma omp parallel for schedule(dynamic) shared(readdatanum, cands, cmd, obs, idata, ii)
+        // #pragma omp parallel for schedule(dynamic) default(none) shared(cands, idata, obs, cmd, readdatanum)
         #endif
         for(ii=0; ii<readdatanum; ii++)
         {
@@ -531,30 +528,26 @@ int main(int argc, char *argv[])
                     }
 
                     /* Write the fundamentals to the output text file */
-                    // output_fundamentals(props, cands[ii], &obs, &idata[ii]);
-                    {
-                        output_fundamentals_list(props, cands[ii], &obs, &idata[ii], ii);
-                        /* Write the harmonics to the output text file */
-                        output_harmonics_list(cands[ii], &obs, &idata[ii], ii);
-                        
-                        /* Write the fundamental fourierprops to the cand file */
-                        obs.workfilelist[ii] = chkfopen(obs.candnmlist[ii], "wb");
-                        chkfwrite(props, sizeof(fourierprops), numcands, obs.workfilelist[ii]);
-                        fclose(obs.workfilelist[ii]);
-                        free(props);
-                    }
+                    output_fundamentals_list(props, cands[ii], &obs, &idata[ii], ii);
+                    /* Write the harmonics to the output text file */
+                    output_harmonics_list(cands[ii], &obs, &idata[ii], ii);
+                    
+                    /* Write the fundamental fourierprops to the cand file */
+                    obs.workfilelist[ii] = chkfopen(obs.candnmlist[ii], "wb");
+                    chkfwrite(props, sizeof(fourierprops), numcands, obs.workfilelist[ii]);
+                    fclose(obs.workfilelist[ii]);
+                    free(props);
                     
                 }
 
             /* Finish up */
-            {
-
-                printf("Final candidates in binary format are in '%s'.\n", obs.candnmlist[ii]);
-                printf("Final Candidates in a text format are in '%s'.\n\n", obs.accelnmlist[ii]);
-            }
+            printf("Final candidates in binary format are in '%s'.\n", obs.candnmlist[ii]);
+            printf("Final Candidates in a text format are in '%s'.\n\n", obs.accelnmlist[ii]);
         }
+        
 
-        for(ii=0; ii<cmd->gpu; ii++)
+
+        for(ii=0; ii<readdatanum; ii++)
         {
             g_slist_foreach(cands[ii], free_accelcand, NULL);
             g_slist_free(cands[ii]);

@@ -1124,12 +1124,12 @@ void output_fundamentals_list(fourierprops *props, GSList *list,
     accelcand *cand;
     register GSList *listptr;
     rzwerrs errs;
-    static char **title;
-    static char *titles1[] = { "", "", "Summed", "Coherent", "Num", "Period",
+    char **title;
+    char *titles1[] = { "", "", "Summed", "Coherent", "Num", "Period",
         "Frequency", "FFT 'r'", "Freq Deriv", "FFT 'z'", "FFT 'w'",
         "Accel", ""
     };
-    static char *titles2[] = { "Cand", "Sigma", "Power", "Power", "Harm", "(ms)",
+    char *titles2[] = { "Cand", "Sigma", "Power", "Power", "Harm", "(ms)",
         "(Hz)", "(bin)", "(Hz/s)", "(bins)", "(bins)",
         "(m/s^2)", "Notes"
     };
@@ -1438,11 +1438,11 @@ void output_harmonics_list(GSList *list, accelobs *obs, infodata *idata, int rea
     register GSList *listptr;
     fourierprops props;
     rzwerrs errs;
-    static char *titles1[] = { "", "", "", "Power /", "Raw",
+    char *titles1[] = { "", "", "", "Power /", "Raw",
         "FFT 'r'", "Pred 'r'", "FFT 'z'", "Pred 'z'", "FFT 'w'", "Pred 'w'",
         "Phase", "Centroid", "Purity", ""
     };
-    static char *titles2[] = { "Cand", "Harm", "Sigma", "Loc Pow", "Power",
+    char *titles2[] = { "Cand", "Harm", "Sigma", "Loc Pow", "Power",
         "(bin)", "(bin)", "(bins)", "(bins)", "(bins)", "(bins)",
         "(rad)", "(0-1)", "<p> = 1", "Notes"
     };
@@ -1868,9 +1868,9 @@ ffdotpows *subharm_fderivs_vol(int numharm, int harmnum,
         vect_free(tmpout);
 
         // Perform the correlations in a thread-safe manner
-        #ifdef _OPENMP
-        #pragma omp parallel default(none) shared(pdata,shi,fftlen,binoffset,ffdot,invplan)
-        #endif
+        // #ifdef _OPENMP
+        // #pragma omp parallel default(none) shared(pdata,shi,fftlen,binoffset,ffdot,invplan)
+        // #endif
         {
             const float norm = 1.0 / (fftlen * fftlen);
             const int offset = binoffset * ACCEL_NUMBETWEEN;
@@ -1878,10 +1878,10 @@ ffdotpows *subharm_fderivs_vol(int numharm, int harmnum,
             fcomplex *tmpdat = gen_cvect(fftlen);
             fcomplex *tmpout = gen_cvect(fftlen);
             int jj;
-            #ifdef _OPENMP
-            // #pragma omp for collapse(2)  Do we want this somehow?
-            #pragma omp for
-            #endif
+            // #ifdef _OPENMP
+            // // #pragma omp for collapse(2)  Do we want this somehow?
+            // #pragma omp for
+            // #endif
             /* Check, should we add the collapse to parallelize numws and numzs loops? */
             for (ii = 0; ii < ffdot->numws; ii++) {
                 for (jj = 0; jj < ffdot->numzs; jj++) {
@@ -2050,14 +2050,8 @@ cufftComplex *cp_kernel_array_to_gpu(subharminfo **subharminfs, int numharmstage
 void get_rind_zind_gpu(unsigned short *d_rinds_gpu, unsigned short *d_zinds_gpu, unsigned short *rinds_cpu, unsigned short *zinds_cpu, int numharmstages, accelobs obs, double fullrlo)
 {
     int ii, kk=0;
-    // unsigned short *rinds_cpu;
-    // unsigned short *zinds_cpu;
     unsigned short *rinds;
     unsigned short *zinds;
-    
-    // cudaMallocHost((void**)&rinds_cpu, sizeof(unsigned short)*obs.corr_uselen*(pow(2,numharmstages)-1));
-    // cudaMallocHost((void**)&zinds_cpu, sizeof(unsigned short)*obs.numz*(pow(2,numharmstages)-1));
-
 
     double rr, subr;
     double drlo, harm_fract;
@@ -2068,6 +2062,8 @@ void get_rind_zind_gpu(unsigned short *d_rinds_gpu, unsigned short *d_zinds_gpu,
     double obszlo = obs.zlo;
     int obsnumz = obs.numz;
 
+    static int first_time = 1;
+
     for (stage = 1; stage < numharmstages; stage++)
     {
         harmtosum = 1 << stage;
@@ -2076,31 +2072,35 @@ void get_rind_zind_gpu(unsigned short *d_rinds_gpu, unsigned short *d_zinds_gpu,
             harm_fract = (double) harm / (double) harmtosum;
             drlo = calc_required_r(harm_fract, fullrlo);
             long long rlo = (long long) floor(drlo);
-            int zlo = calc_required_z(harm_fract, obszlo);
             rinds = rinds_cpu+kk*corr_uselen;
-            zinds = zinds_cpu+kk*obsnumz;
+            
             for (ii = 0; ii < corr_uselen; ii++) {
                 rr = fullrlo + ii * ACCEL_DR;
                 subr = calc_required_r(harm_fract, rr);
                 rinds[ii] = index_from_r(subr, rlo);
             }
-            double zz, subz;
-            for (ii = 0; ii < obsnumz; ii++) {
-                zz = obszlo + ii * ACCEL_DZ;
-                subz = calc_required_z(harm_fract, zz);
-                zinds[ii] = index_from_z(subz, zlo);
+            if(first_time)
+            {
+                int zlo = calc_required_z(harm_fract, obszlo);
+                zinds = zinds_cpu+kk*obsnumz;
+                double zz, subz;
+                for (ii = 0; ii < obsnumz; ii++) {
+                    zz = obszlo + ii * ACCEL_DZ;
+                    subz = calc_required_z(harm_fract, zz);
+                    zinds[ii] = index_from_z(subz, zlo);
+                }
             }
+
             kk++;
         }
     }
 
     cudaMemcpy(d_rinds_gpu, rinds_cpu, sizeof(unsigned short)*obs.corr_uselen*(pow(2,numharmstages)-1), cudaMemcpyHostToDevice);
-    // CUDA_CHECK(cudaGetLastError());
-    cudaMemcpy(d_zinds_gpu, zinds_cpu, sizeof(unsigned short)*obs.numz*(pow(2,numharmstages)-1), cudaMemcpyHostToDevice);
-    // CUDA_CHECK(cudaGetLastError());
-
-    // cudaFree(rinds_cpu);
-    // cudaFree(zinds_cpu);
+    if(first_time) 
+    {
+        cudaMemcpy(d_zinds_gpu, zinds_cpu, sizeof(unsigned short)*obs.numz*(pow(2,numharmstages)-1), cudaMemcpyHostToDevice);
+        first_time = 0;
+    }
 }
 
 
@@ -2209,15 +2209,8 @@ void *subharm_fderivs_vol_gpu(int numharm, int harmnum, double fullrlo, double f
         }
 
     }
-
-    
             
     // cudaMemcpy(data_gpu, data, sizeof(cufftComplex)*numdata, cudaMemcpyHostToDevice);
-
-
-    
-
-    
 
     // Note COMPLEXFFT is not thread-safe because of wisdom caching
 
@@ -2777,9 +2770,9 @@ void inmem_add_ffdotpows(ffdotpows * fundamental, accelobs * obs,
     }
 
     // Now add all the powers
-#ifdef _OPENMP
-#pragma omp parallel shared(rinds,fundamental,obs)
-#endif
+// #ifdef _OPENMP
+// #pragma omp parallel shared(rinds,fundamental,obs)
+// #endif
     {
         const int zlo = fundamental->zlo;
         const long long rlen = (obs->highestbin + obs->corr_uselen) * ACCEL_RDR;
@@ -2788,9 +2781,9 @@ void inmem_add_ffdotpows(ffdotpows * fundamental, accelobs * obs,
         int ii, jj, zz, zind, subz;
         float *inpows, *outpows;
         long long offset;
-#ifdef _OPENMP
-#pragma omp for
-#endif
+// #ifdef _OPENMP
+// #pragma omp for
+// #endif
         for (ii = 0; ii < numzs; ii++) {
             zz = zlo + ii * ACCEL_DZ;
             subz = calc_required_z(harm_fract, zz);
@@ -2801,6 +2794,8 @@ void inmem_add_ffdotpows(ffdotpows * fundamental, accelobs * obs,
 #if (defined(__GNUC__) || defined(__GNUG__)) && \
     !(defined(__clang__) || defined(__INTEL_COMPILER))
 #pragma GCC ivdep
+#elif defined(__INTEL_COMPILER)
+#pragma ivdep      // Intel only
 #endif
             for (jj = 0; jj < numrs; jj++)
                 outpows[jj] += inpows[rinds[jj]];
@@ -2959,6 +2954,86 @@ GSList *search_ffdotpows(ffdotpows * ffdot, int numharm,
 GSList *search_ffdotpows_sort_gpu_result(ffdotpows * ffdot, int numharm,
                          accelobs * obs, GSList * cands, accel_cand_gpu *cand_gpu_cpu, int nof_cand)
 {
+   int ii;
+//    register float powcut;
+   long long numindep;
+
+//    powcut = obs->powcut[twon_to_index(numharm)];
+   numindep = obs->numindep[twon_to_index(numharm)];	
+   
+   float pow, sig;
+   double rr, zz, ww;
+   int added = 0;   
+   
+   int rind, zind;
+   
+   if(nof_cand > 0)
+   {
+   		for(ii=0; ii< nof_cand; ii++)
+   		{   	
+   			added = 0;      			
+   			pow = cand_gpu_cpu[ii].pow; 
+   			sig = candidate_sigma(pow, numharm, numindep);   						
+   			zind = cand_gpu_cpu[ii].z_ind;
+   			rind = cand_gpu_cpu[ii].r_ind;     			
+   			rr = (ffdot->rlo + rind * (double) ACCEL_DR) / (double) numharm;   			
+   			zz = (ffdot->zlo + zind * (double) ACCEL_DZ) / (double) numharm;
+   			ww = 0.0;
+   			// cands = insert_new_accelcand(cands, pow, sig, numharm, rr, zz, &added);
+            cands = insert_new_accelcand(cands, pow, sig, numharm, rr, zz, ww, &added);
+   			if (added && !obs->dat_input)
+               fprintf(obs->workfile,
+                                "%-7.2f  %-7.4f  %-2d  %-14.4f  %-14.9f  %-10.4f %-10.4f\n",
+                                pow, sig, numharm, rr, rr / obs->T, zz, ww);
+   		}  		   		
+   }
+   
+   return cands;
+}
+
+GSList *search_ffdotpows_sort_gpu_result_listm(ffdotpows * ffdot, int numharm,
+                         accelobs * obs, GSList * cands, accel_cand_gpu *cand_gpu_cpu, int nof_cand, int readid)
+{
+    int ii;
+//    register float powcut;
+   long long numindep;
+
+//    powcut = obs->powcut[twon_to_index(numharm)];
+   numindep = obs->numindep[twon_to_index(numharm)];	
+   
+   float pow, sig;
+   double rr, zz, ww;
+   int added = 0;   
+   
+   int rind, zind;
+   
+   if(nof_cand > 0)
+   {
+   		for(ii=0; ii< nof_cand; ii++)
+   		{   	
+   			added = 0;      			
+   			pow = cand_gpu_cpu[ii].pow; 
+   			sig = candidate_sigma(pow, numharm, numindep);   						
+   			zind = cand_gpu_cpu[ii].z_ind;
+   			rind = cand_gpu_cpu[ii].r_ind;     			
+   			rr = (ffdot->rlo + rind * (double) ACCEL_DR) / (double) numharm;   			
+   			zz = (ffdot->zlo + zind * (double) ACCEL_DZ) / (double) numharm;
+   			ww = 0.0;
+   			// cands = insert_new_accelcand(cands, pow, sig, numharm, rr, zz, &added);
+            cands = insert_new_accelcand(cands, pow, sig, numharm, rr, zz, ww, &added);
+   			if (added && !obs->dat_input)
+               fprintf(obs->workfilelist[readid],
+                                "%-7.2f  %-7.4f  %-2d  %-14.4f  %-14.9f  %-10.4f %-10.4f\n",
+                                pow, sig, numharm, rr, rr / obs->T, zz, ww);
+   		}  		   		
+   }
+   
+   return cands;
+}
+
+GSList *search_ffdotpows_sort_gpu_result_t(long long ffdot_rlo, int ffdot_zlo, int numharm,
+                         accelobs * obs, GSList * cands, accel_cand_gpu *cand_gpu_cpu, int nof_cand)
+{
    register int ii;
 //    register float powcut;
    register long long numindep;
@@ -2981,8 +3056,8 @@ GSList *search_ffdotpows_sort_gpu_result(ffdotpows * ffdot, int numharm,
    			sig = candidate_sigma(pow, numharm, numindep);   						
    			zind = cand_gpu_cpu[ii].z_ind;
    			rind = cand_gpu_cpu[ii].r_ind;     			
-   			rr = (ffdot->rlo + rind * (double) ACCEL_DR) / (double) numharm;   			
-   			zz = (ffdot->zlo + zind * (double) ACCEL_DZ) / (double) numharm;
+   			rr = (ffdot_rlo + rind * (double) ACCEL_DR) / (double) numharm;   			
+   			zz = (ffdot_zlo + zind * (double) ACCEL_DZ) / (double) numharm;
    			ww = 0.0;
    			// cands = insert_new_accelcand(cands, pow, sig, numharm, rr, zz, &added);
             cands = insert_new_accelcand(cands, pow, sig, numharm, rr, zz, ww, &added);
@@ -4270,6 +4345,390 @@ void create_accelobs_list_1(accelobs * obs, infodata * idata, Cmdline * cmd, int
         firsttime = 0;
     
 }
+
+void create_accelobs_list_2(accelobs * obs, infodata * idata, Cmdline * cmd, int usemmap, int readid)
+{
+    int ii, rootlen, input_shorts = 0;
+    // static int firsttime = 1;
+    static float *ftmp_bk;
+    static float *ftmp;
+
+    {
+        int hassuffix = 0;
+        char *suffix;
+        
+        printf("%s\n", cmd->datalist[readid]);
+        hassuffix = split_root_suffix(cmd->datalist[readid], &(obs->rootfilenm), &suffix);
+        // hassuffix = split_root_suffix(cmd->argv[0], &(obs->rootfilenm), &suffix);
+        if (hassuffix) {
+            if (strcmp(suffix, "fft") != 0 &&
+                strcmp(suffix, "dat") != 0 && strcmp(suffix, "sdat") != 0) {
+                printf
+                    ("\nInput file ('%s') must be an '.fft' or '.[s]dat' file!\n\n",
+                     cmd->datalist[readid]);
+                free(suffix);
+                exit(0);
+            }
+            /* If the input file is a time series */
+            if (strcmp(suffix, "dat") == 0 || strcmp(suffix, "sdat") == 0) {
+                obs->dat_input = 1;
+                obs->mmap_file = 0;
+                if (strcmp(suffix, "sdat") == 0)
+                    input_shorts = 1;
+            }
+            else {
+                obs->dat_input = 0;
+            }
+
+            // if(strcmp(suffix, "fft") == 0 && obs->cudaP) 
+            // {
+            //     printf("\nInput file ('%s') must be an '.[s]dat' file  with CUDA !\n\n",cmd->argv[0]);
+            //     free(suffix);
+            //     exit(0);
+            // }
+
+            free(suffix);
+        } else {
+            printf("\nInput file ('%s') must be an '.fft' or '.[s]dat' file!\n\n",
+                   cmd->datalist[readid]);
+            exit(0);
+        }
+    }
+
+
+
+    if (cmd->noharmpolishP)
+        obs->use_harmonic_polishing = 0;
+    else
+        obs->use_harmonic_polishing = 1;        // now default
+
+    /* Read the info file */
+
+    readinf(idata, obs->rootfilenm);
+    if (strlen(remove_whitespace(idata->object)) > 0) {
+        printf("Analyzing %s data from '%s'.\n\n",
+               remove_whitespace(idata->object), cmd->datalist[readid]);
+    } else {
+        printf("Analyzing data from '%s'.\n\n", cmd->datalist[readid]);
+    }
+    obs->cudaP = cmd->cudaP;
+    /* Prepare the input time series if required */
+
+    if (obs->dat_input) {
+        FILE *datfile;
+        long long filelen;
+        
+
+        printf("Reading and FFTing the time series...");
+        fflush(NULL);
+        datfile = chkfopen(cmd->datalist[readid], "rb");
+
+        /* Check the length of the file to see if we can handle it */
+        filelen = chkfilelen(datfile, sizeof(float));
+        if (input_shorts)
+            filelen *= 2;
+        // if (filelen > 67108864) {       /* Small since we need memory for the templates */
+        //     printf
+        //         ("\nThe input time series is too large.  Use 'realfft' first.\n\n");
+        //     exit(0);
+        // }
+
+        /* Read the time series into a temporary buffer */
+        /* Note:  The padding allows us to search very short time series */
+        /*        using correlations without having to worry about       */
+        /*        accessing data before or after the valid FFT freqs.    */
+        if (input_shorts) {
+            short *stmp = gen_svect(filelen);
+            ftmp = gen_fvect(filelen + 2 * ACCEL_PADDING);
+            for (ii = 0; ii < ACCEL_PADDING; ii++) {
+                ftmp[ii] = 0.0;
+                ftmp[ii + filelen + ACCEL_PADDING] = 0.0;
+            }
+            chkfread(stmp, sizeof(short), filelen, datfile);
+            for (ii = 0; ii < filelen; ii++)
+                ftmp[ii + ACCEL_PADDING] = (float) stmp[ii];
+            vect_free(stmp);
+        } else {
+            ftmp =
+                read_float_file(datfile, -ACCEL_PADDING,
+                                filelen + 2 * ACCEL_PADDING);
+        }
+        /* Now, offset the pointer so that we are pointing at the first */
+        /* bits of valid data.                                          */
+        ftmp += ACCEL_PADDING;
+        fclose(datfile);
+
+        /* FFT it */
+        realfft(ftmp, filelen, -1);
+        obs->fftfile = NULL;
+        obs->fft = (fcomplex *) ftmp;
+        obs->numbins = filelen / 2;
+        printf("done.\n");
+
+        /* De-redden it */
+        printf("Removing red-noise...");
+        deredden(obs->fft, obs->numbins);
+        printf("done.\n\n");
+    }
+
+    /* Open the FFT file if it exists appropriately */
+    if (!obs->dat_input) {
+        obs->fftfile = chkfopen(cmd->datalist[readid], "rb");
+        obs->numbins = chkfilelen(obs->fftfile, sizeof(fcomplex));
+        if (usemmap) {
+            fclose(obs->fftfile);
+            obs->fftfile = NULL;
+            printf("Memory mapping the input FFT.  This may take a while...\n");
+            obs->mmap_file = open(cmd->datalist[readid], O_RDONLY);
+            if (obs->mmap_file == -1) {
+                perror("\nError in open() in accel_utils.c");
+                printf("\n");
+                exit(-1);
+            }
+            obs->fft =
+                (fcomplex *) mmap(0, sizeof(fcomplex) * obs->numbins, PROT_READ,
+                                  MAP_SHARED, obs->mmap_file, 0);
+            if (obs->fft == MAP_FAILED) {
+                perror("\nError in mmap() in accel_utils.c");
+                printf("Falling back to a non-mmaped approach\n");
+                obs->fftfile = chkfopen(cmd->datalist[readid], "rb");
+                obs->mmap_file = 0;
+            }
+        } else {
+            obs->mmap_file = 0;
+        }
+    }
+
+    /* Determine the other parameters */
+
+    if (cmd->zmax % ACCEL_DZ)
+        cmd->zmax = (cmd->zmax / ACCEL_DZ + 1) * ACCEL_DZ;
+    obs->N = (long long) idata->N;
+    if (cmd->photonP) {
+        if (obs->mmap_file || obs->dat_input) {
+            obs->nph = obs->fft[0].r;
+        } else {
+            obs->nph = get_numphotons(obs->fftfile);
+        }
+        printf("Normalizing powers using %.0f photons.\n\n", obs->nph);
+    } else {
+        obs->nph = 0.0;
+        /* For short FFTs insure that we don't pick up the DC */
+        /* or Nyquist component as part of the interpolation  */
+        /* for higher frequencies.                            */
+        if (cmd->locpowP) {
+            obs->norm_type = 1;
+            printf("Normalizing powers using local-power determination.\n\n");
+        } else if (cmd->medianP) {
+            obs->norm_type = 0;
+            printf("Normalizing powers using median-blocks.\n\n");
+        } else {
+            obs->norm_type = 0;
+            printf("Normalizing powers using median-blocks (default).\n\n");
+        }
+        if (obs->dat_input) {
+            obs->fft[0].r = 1.0;
+            obs->fft[0].i = 1.0;
+        }
+    }
+
+    // if(firsttime)
+    {
+        obs->lobin = cmd->lobin;
+        if (obs->lobin > 0) {
+            obs->nph = 0.0;
+            if (cmd->lobin > obs->numbins - 1) {
+                printf("\n'lobin' is greater than the total number of\n");
+                printf("   frequencies in the data set.  Exiting.\n\n");
+                exit(1);
+            }
+        }
+        if (cmd->numharm != 1 &&
+            cmd->numharm != 2 &&
+            cmd->numharm != 4 &&
+            cmd->numharm != 8 &&
+            cmd->numharm != 16 &&
+            cmd->numharm != 32) {
+            printf("\n'numharm' = %d must be a power-of-two!  Exiting\n\n",
+                cmd->numharm);
+            exit(1);
+        }
+        obs->numharmstages = twon_to_index(cmd->numharm) + 1;
+
+        // if(cmd->cudaP && (obs->mmap_file || obs->dat_input))
+        // {
+        //     fcomplex *temp_gpu;
+        //     cudaMalloc((void**)&temp_gpu, sizeof(fcomplex)*(obs->numbins+ACCEL_PADDING));
+        //     cudaMemcpy(temp_gpu, obs->fft-ACCEL_PADDING/2, sizeof(fcomplex) * (obs->numbins+ACCEL_PADDING), cudaMemcpyHostToDevice);
+        //     obs->fft_gpu = temp_gpu+ACCEL_PADDING/2;
+        // }
+
+        obs->dz = ACCEL_DZ;
+        obs->numz = (cmd->zmax / ACCEL_DZ) * 2 + 1;
+        
+        /* Setting extra parameters for jerk search */
+        if (cmd->wmaxP) {
+            if (cmd->wmax % ACCEL_DW)
+                cmd->wmax = (cmd->wmax / ACCEL_DW + 1) * ACCEL_DW;
+            obs->whi = cmd->wmax;
+            obs->wlo = -cmd->wmax;
+            obs->dw = ACCEL_DW;
+            obs->numw = (cmd->wmax / ACCEL_DW) * 2 + 1;
+            if (cmd->wmax==0.0)
+                obs->numw = 0;
+            printf("Jerk search enabled with maximum fdotdot wmax = %d\n", cmd->wmax);
+        } else {
+            obs->whi = 0.0;
+            obs->wlo = 0.0;
+            obs->dw = 0.0;
+            obs->numw = 0;
+        }
+    }
+    
+    
+    /* Determine the output filenames */
+    rootlen = strlen(obs->rootfilenm) + 45;
+    obs->candnm = (char *) calloc(rootlen, 1);
+    obs->accelnm = (char *) calloc(rootlen, 1);
+    obs->workfilenm = (char *) calloc(rootlen, 1);
+    if (obs->numw) {
+        sprintf(obs->candnm, "%s_ACCEL_%d_JERK_%d.cand", obs->rootfilenm, cmd->zmax, cmd->wmax);
+        sprintf(obs->accelnm, "%s_ACCEL_%d_JERK_%d", obs->rootfilenm, cmd->zmax, cmd->wmax);
+        sprintf(obs->workfilenm, "%s_ACCEL_%d_JERK_%d.txtcand", obs->rootfilenm, cmd->zmax, cmd->wmax);
+    } else {
+        sprintf(obs->candnm, "%s_ACCEL_%d.cand", obs->rootfilenm, cmd->zmax);
+        sprintf(obs->accelnm, "%s_ACCEL_%d", obs->rootfilenm, cmd->zmax);
+        sprintf(obs->workfilenm, "%s_ACCEL_%d.txtcand", obs->rootfilenm, cmd->zmax);
+    }
+    if (!obs->dat_input)
+        obs->workfile = chkfopen(obs->workfilenm, "w");
+
+    // if(firsttime)
+    {
+        obs->numbetween = ACCEL_NUMBETWEEN;
+        obs->dt = idata->dt;
+        obs->T = idata->dt * idata->N;
+        if (cmd->floP) {
+            obs->rlo = floor(cmd->flo * obs->T);
+            if (obs->rlo < obs->lobin)
+                obs->rlo = obs->lobin;
+            if (obs->rlo > obs->numbins - 1) {
+                printf("\nLow frequency to search 'flo' is greater than\n");
+                printf("   the highest available frequency.  Exiting.\n\n");
+                exit(1);
+            }
+        } else {
+            if (cmd->rloP)
+                obs->rlo = cmd->rlo;
+            else
+                obs->rlo = 1.0;
+            if (obs->rlo < obs->lobin)
+                obs->rlo = obs->lobin;
+            if (obs->rlo > obs->numbins - 1) {
+                printf("\nLow frequency to search 'rlo' is greater than\n");
+                printf("   the available number of points.  Exiting.\n\n");
+                exit(1);
+            }
+        }
+        obs->highestbin = obs->numbins - 1;
+        if (cmd->fhiP) {
+            obs->highestbin = ceil(cmd->fhi * obs->T);
+            if (obs->highestbin > obs->numbins - 1)
+                obs->highestbin = obs->numbins - 1;
+            obs->rhi = obs->highestbin;
+            if (obs->highestbin < obs->rlo) {
+                printf("\nHigh frequency to search 'fhi' is less than\n");
+                printf("   the lowest frequency to search 'flo'.  Exiting.\n\n");
+                exit(1);
+            }
+        } else if (cmd->rhiP) {
+            obs->highestbin = cmd->rhi;
+            if (obs->highestbin > obs->numbins - 1)
+                obs->highestbin = obs->numbins - 1;
+            obs->rhi = obs->highestbin;
+            if (obs->highestbin < obs->rlo) {
+                printf("\nHigh frequency to search 'rhi' is less than\n");
+                printf("   the lowest frequency to search 'rlo'.  Exiting.\n\n");
+                exit(1);
+            }
+        }
+        obs->dr = ACCEL_DR;
+        obs->zhi = cmd->zmax;
+        obs->zlo = -cmd->zmax;
+        obs->sigma = cmd->sigma;
+        obs->powcut = (float *) malloc(obs->numharmstages * sizeof(float));
+        obs->numindep = (long long *) malloc(obs->numharmstages * sizeof(long long));
+        for (ii = 0; ii < obs->numharmstages; ii++) {
+            if (obs->numz == 1 && obs->numw == 0)
+                obs->numindep[ii] = (obs->rhi - obs->rlo) / index_to_twon(ii);
+            else if (obs->numz > 1 && obs->numw == 0)
+                /* The numz+1 takes care of the small amount of  */
+                /* search we get above zmax and below zmin.      */
+                obs->numindep[ii] = (obs->rhi - obs->rlo) * (obs->numz + 1) *
+                    (obs->dz / 6.95) / index_to_twon(ii);
+            else
+                /* The numw+1 takes care of the small amount of  */
+                /* search we get above wmax and below wmin.      */
+                obs->numindep[ii] = (obs->rhi - obs->rlo) * \
+                    (obs->numz + 1) * (obs->dz / 6.95) *        \
+                    (obs->numw + 1) * (obs->dw / 44.2) / index_to_twon(ii);
+            obs->powcut[ii] = power_for_sigma(obs->sigma,
+                                            index_to_twon(ii), obs->numindep[ii]);
+        }
+        obs->numzap = 0;
+        /*
+        if (zapfile!=NULL)
+        obs->numzap = get_birdies(cmd->zapfile, obs->T, obs->baryv, 
+        &(obs->lobins), &(obs->hibins));
+        else
+        obs->numzap = 0;
+        */
+
+        /* Determine corr_uselen from zmax and wmax */
+        obs->maxkernlen = 2 * ACCEL_NUMBETWEEN * w_resp_halfwidth(obs->zhi, obs->whi, LOWACC);
+        obs->fftlen = fftlen_from_kernwidth(obs->maxkernlen);
+        if (obs->fftlen < 2048)
+            obs->fftlen = 2048;  // This gives slightly better speed empirically
+        obs->corr_uselen = obs->fftlen - obs->maxkernlen;
+        // Make sure that obs->corr_uselen is an integer number of
+        // full (i.e. un-interpolated) Fourier bins
+        if (obs->corr_uselen % ACCEL_RDR)
+            obs->corr_uselen = obs->corr_uselen / ACCEL_RDR * ACCEL_RDR;
+
+        /* Can we perform the search in-core memory? */
+        {
+            long long memuse;
+            // double gb = (double) (1L << 30);
+
+            if (cmd->wmaxP) {
+                memuse = sizeof(float) * (obs->highestbin + obs->corr_uselen)
+                    * obs->numbetween * obs->numz * obs->numw;
+            } else {
+                memuse = sizeof(float) * (obs->highestbin + obs->corr_uselen)
+                    * obs->numbetween * obs->numz;
+            }
+
+            // This is the size of powers covering the full f-dot-dot plane to search
+            // Need the extra obs->corr_uselen since we generate the plane in blocks
+            if (!cmd->wmaxP && cmd->inmemP) 
+            // if (!cmd->wmaxP &&  cmd->inmemP) 
+            {
+                printf("using in-memory accelsearch.\n\n");
+                obs->inmem = 1;
+                if(!cmd->cudaP)
+                    obs->ffdotplane = gen_fvect(memuse / sizeof(float));
+            } else {
+                printf("using standard accelsearch.\n\n");
+                obs->inmem = 0;
+                obs->ffdotplane = NULL;
+            }
+        }
+    }
+    // else
+    //     firsttime = 0;
+    
+}
+
 
 
 void free_accelobs(accelobs * obs)

@@ -382,12 +382,12 @@ double foldfile(FILE * datafile, double dt, double tlo,
             chkfread(data, sizeof(float), binstoread, datafile);
 
             /* Fold the current chunk of data */
-
+            double avg = 0.0;
             phase = fold(data, binstoread, dt, tlo + onbin * dt, prof,
                          numprof, startphs, buffer, &phaseadded,
                          fo, fdot, fdotdot, ourflags,
                          delays, delaytimes, numdelays,
-                         NULL, stats, standard);
+                         NULL, stats, standard, avg);
 
             /* Set the current chiarr value */
 
@@ -441,11 +441,12 @@ double simplefold(float *data, int numdata, double dt, double tlo,
     for (ii = 0; ii < numprof; ii++)
         buffer[ii] = 0.0;
 
+    double avg = 0.0;
     /* Now fold */
     phase = fold(data, numdata, dt, tlo,
                  prof, numprof, startphs,
                  buffer, &phaseadded, fo, fdot, fdotdot,
-                 ourflags, NULL, NULL, 0, NULL, &stats, standard);
+                 ourflags, NULL, NULL, 0, NULL, &stats, standard, avg);
     vect_free(buffer);
     return phase;
 }
@@ -456,7 +457,7 @@ double fold(float *data, int numdata, double dt, double tlo,
             double *buffer, double *phaseadded,
             double fo, double fdot, double fdotdot, int flags,
             double *delays, double *delaytimes, int numdelays,
-            int *onoffpairs, foldstats * stats, int standard)
+            int *onoffpairs, foldstats * stats, int standard, double avg)
 /* This routine is a general pulsar folding algorithm.  It will fold  */
 /* data for a pulsar with single and double frequency derivatives and */
 /* with arbitrary pulse delays (for example: variable time delays     */
@@ -505,7 +506,7 @@ double fold(float *data, int numdata, double dt, double tlo,
 /* Notes:  fo, fdot, and fdotdot correspond to 'tlo' = 0.0            */
 /*    (i.e. to the beginning of the first data point)                 */
 {
-    int ii, onbin, offbin, *onoffptr = NULL;
+    int ii, jj, onbin, offbin, *onoffptr = NULL;
     int arrayoffset = 0;
     long double phase, phasenext = 0.0, deltaphase, T, Tnext, TD, TDnext;
     long double profbinwidth, lophase, hiphase;
@@ -592,7 +593,7 @@ double fold(float *data, int numdata, double dt, double tlo,
             /* How much total phase does the data point cover? */
             deltaphase = phasenext - phase;
             
-            data_ii = data[ii];
+            data_ii = data[ii] - avg;
             /* Add the current point to the buffer or the profile */
             if (standard)
                 add_to_prof(prof, buffer, numprof, lophase,
@@ -600,9 +601,6 @@ double fold(float *data, int numdata, double dt, double tlo,
             else
                 add_to_prof_sample(prof, buffer, numprof, lophase,
                                    deltaphase, data_ii);
-
-
-            // printf("\n%d    %d    %d    %Le    %Le    %Le    %Le    %e",ii, DELAYS, numprof, lophase, phase, deltaphase, 1.0L*numprof*lophase, *phaseadded);
 
             /* Update variables */
             hiphase = lophase + deltaphase;
@@ -614,7 +612,7 @@ double fold(float *data, int numdata, double dt, double tlo,
             dev = data_ii - stats->data_avg;
             stats->data_avg += dev / stats->numdata;
             stats->data_var += dev * (data_ii - stats->data_avg);
-        }
+        }       
 
     } while (offbin < numdata - 1 && offbin != 0);
 
@@ -642,7 +640,6 @@ double fold(float *data, int numdata, double dt, double tlo,
 
     return (phasenext);
 }
-
 void fold_2_gpu(float *data, int nsub, int numdata, double dt, double tlo,
             double *prof, int numprof, double startphs,
             double *buffer, double *phaseadded,
