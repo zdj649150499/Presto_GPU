@@ -2,16 +2,18 @@
 
 This is a GPU version of PRESTO that created by DeJiang Zhou at NAOC (zdj649150499@163.com).
 
-In this version, `prepsubband` ,`accelsearch`, and `prepfold` can work with the option `-cuda` on a GPU device.
-
-We added a new `prepcache`, which can generate a cache file and  greatly accelerate the speed of `prepsubband` and `prepfold`.
-
-Using `accelsearchlist1` or `accelsearchlistm` to process`.dat.list` files can save a lot of memory processing time.
 
 
+1） In this version, `prepsubband` ,`accelsearch`, and `prepfold` can work with the option `-cuda` on a GPU device, `rfifind` cand work with multi-threads.
 
-Note that the GPU version of `accelsearch` references `presto_on_gpu_ljt` and it cannot yet do `jerk` searches, i.e. it cannot be used with `-wmax`.
-Something of `rfifind` have also been changed and the GPU version of `prepfold` will reported in the future.
+2） We have a new `prepcache`, which can generate a cache file and  greatly accelerate the speed of `prepsubband` and `prepfold`.
+
+Note: With `prepcache` enabled, the output isn't 32-bit. Instead, files are generated using the \*Data (8-bit) × SCL (32-bit) + OFFS (32-bit)\* algorithm to reduce storage requirements. This deliberately reduces precision, introducing negligible differences in results, but remains acceptable.
+
+3） Using `accelsearchlist1, accelsearchlist1t` or `accelsearchlistm` to process`.dat.list` files (`prepsubband -outlist`) can save a lot of memory processing time.
+
+Note: The GPU version of `accelsearch` and other search grammars references `presto_on_gpu_ljt` and it cannot yet do `jerk` searches, i.e. it cannot be used `-cuda` with `-wmax`.
+
 
 The original CPU version is: http://www.cv.nrao.edu/~sransom/presto/
 
@@ -34,7 +36,7 @@ For searching pulsar with this Presto, you can use the following command:
 1: `rfifind`
 
 ```shell
-$ rfifind -time aaa -o bbb bbb.fits
+$ rfifind -ncpus 16 -time aaa -o bbb bbb.fits
 ```
 
 
@@ -55,9 +57,9 @@ $ prepcache -zerodm -ncpus 16 -o bbb -mask bbb_rfifind.mask bbb.fits
 
 ```shell
 # If you used the prepcache before:
-$ prepsubband -cache -cuda 0 -nsub 64 -lodm 5 -numdms 100 -dmstep 1 -downsamp 1 -numout 1000000 -mask bbb_rfifind.mask -o bbb bbb.fits
+$ prepsubband -cache -cuda 0 -nsub 64 -lodm 5 -numdms 100 -dmstep 1 -downsamp 1 -numout 1000000 -o bbb bbb.fits
 # or de-zerodm
-$ prepsubband -zerodm -cache -cuda 0 -nsub 64 -lodm 5 -numdms 100 -dmstep 1 -downsamp 1 -numout 1000000 -mask bbb_rfifind.mask -o bbb bbb.fits
+$ prepsubband -zerodm -cache -cuda 0 -nsub 64 -lodm 5 -numdms 100 -dmstep 1 -downsamp 1 -numout 1000000 -o bbb bbb.fits
 
 # If you do not used the prepcache before:
 $ prepsubband -cuda 0 -nsub 64 -lodm 5 -numdms 100 -dmstep 1 -downsamp 1 -numout 1000000 -mask bbb_rfifind.mask -o bbb bbb.fits
@@ -75,7 +77,7 @@ for the version of GPU_v2.1, you can get a "`.dat.list`" file for each `prepsubb
 $ accelsearch -cuda 0 -numharm 32 -zmax 200 cccccc.dat
 ```
 
-For the version of GPU_v2.1, you can use `accelsearchlist1` or `accelsearchlistm` with the "`.dat.list`" files
+For the version of GPU_v2.1, you can use `accelsearchlist1` or `accelsearchlist1t` or `accelsearchlistm` with the "`.dat.list`" files
 
 ```shell
 # input with a .dat.list, and use the accelsearchlist1 for searching:
@@ -83,7 +85,7 @@ $ accelsearchlist1 -cuda 0 -numharm 32 -zmax 200  cccccc.dat.list
 # or use accelsearchlist1 by 2-thread
 $ accelsearchlist1t -cuda 0 -numharm 32 -zmax 200  cccccc.dat.list
 
-# or use the accelsearchlistm for multi-.dat file at once: (some error in RTX GPU)
+# or use the accelsearchlistm for multi-.dat file at once: (still some error in RTX GPU)
 # $ accelsearchlistm -ncpus 10 -gput 10 -cuda 0 -numharm 32 -zmax 200  cccccc.dat.list
 ```
 
@@ -93,7 +95,7 @@ $ accelsearchlist1t -cuda 0 -numharm 32 -zmax 200  cccccc.dat.list
 
 ```shell
 # If you used the prepcache before:
-$ prepfold -cache -cuda 0 -accelcand 1 -accelfile cccccc_ACCEL_0.cand -dm 211.7 -mask bbb_rfifind.mask -o ccccc bbb.fits
+$ prepfold -cache -cuda 0 -accelcand 1 -accelfile cccccc_ACCEL_0.cand -dm 211.7 -o ccccc bbb.fits
 # If you do not used the prepcache before:
 $ prepfold -cuda 0 -accelcand 1 -accelfile cccccc_ACCEL_0.cand -dm 211.7 -mask bbb_rfifind.mask -o ccccc bbb.fits
 
